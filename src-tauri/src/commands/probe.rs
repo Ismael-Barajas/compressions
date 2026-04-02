@@ -1,0 +1,81 @@
+use std::path::Path;
+
+use tauri::AppHandle;
+
+use crate::ffmpeg::probe::probe_video_info;
+use crate::types::{FileInfo, MediaType};
+
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts",
+];
+
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+];
+
+#[tauri::command]
+pub fn detect_media_type(path: String) -> Result<MediaType, String> {
+    let ext = Path::new(&path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        Ok(MediaType::Video)
+    } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        Ok(MediaType::Image)
+    } else {
+        Err(format!("Unsupported file type: .{}", ext))
+    }
+}
+
+#[tauri::command]
+pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String> {
+    let file_name = Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let size = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let media_type = detect_media_type(path.clone())?;
+
+    match media_type {
+        MediaType::Video => {
+            let info = probe_video_info(&app, &path).await?;
+            Ok(FileInfo {
+                path,
+                file_name,
+                size,
+                media_type: MediaType::Video,
+                duration: info.duration,
+                resolution: info.resolution,
+                codec_name: info.codec_name,
+            })
+        }
+        MediaType::Image => {
+            // Use the image crate to read dimensions
+            let path_clone = path.clone();
+            let dims = tokio::task::spawn_blocking(move || {
+                image::image_dimensions(&path_clone).ok()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+            Ok(FileInfo {
+                path,
+                file_name,
+                size,
+                media_type: MediaType::Image,
+                duration: None,
+                resolution: dims.map(|(w, h)| crate::types::Resolution {
+                    width: w,
+                    height: h,
+                }),
+                codec_name: None,
+            })
+        }
+    }
+}

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c:*)",
+      "Bash(tee \"C:/Users/Inxxa/.claude/plans/peaceful-weaving-sundae-agent-a76b743d4d778da4f.md\")",
+      "Bash(/dev/null:*)",
+      "Bash(echo \"Plan file written: $?\")",
+      "Bash(node -e:*)",
+      "Bash(npm --version)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(where rustc:*)",
+      "Read(//c/Users/Inxxa/.cargo/bin/**)",
+      "Read(//c/Users/Inxxa/.rustup/**)",
+      "Bash(cmd.exe /c \"where rustc\")",
+      "Bash(cmd.exe /c \"rustc --version\")",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)"
+    ]
+  }
+}
