@@ -1,16 +1,40 @@
-import { Plus, Trash2, Play } from "lucide-react";
+import { Plus, Trash2, Play, FolderOpen } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
+import { useCompression } from "../../hooks/useCompression";
+import { scanPaths } from "../../lib/commands";
+import { getMediaType, getFileName } from "../../lib/fileUtils";
 import { FileItem } from "./FileItem";
+
+function addResolvedPaths(paths: string[]) {
+  const newFiles = paths
+    .map((path) => {
+      const mediaType = getMediaType(path);
+      if (!mediaType) return null;
+      return {
+        id: crypto.randomUUID(),
+        path,
+        name: getFileName(path),
+        size: 0,
+        mediaType,
+        status: "queued" as const,
+        progress: 0,
+      };
+    })
+    .filter((f): f is NonNullable<typeof f> => f !== null);
+  if (newFiles.length > 0) {
+    useCompressionStore.getState().addFiles(newFiles);
+  }
+}
 
 export function FileList() {
   const files = useCompressionStore((s) => s.files);
   const clearFiles = useCompressionStore((s) => s.clearFiles);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
+  const { startCompression } = useCompression();
 
   const handleAddMore = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const { getMediaType, getFileName } = await import("../../lib/fileUtils");
       const selected = await open({
         multiple: true,
         filters: [
@@ -25,24 +49,21 @@ export function FileList() {
       });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        const newFiles = paths
-          .map((path) => {
-            const mediaType = getMediaType(path);
-            if (!mediaType) return null;
-            return {
-              id: crypto.randomUUID(),
-              path,
-              name: getFileName(path),
-              size: 0,
-              mediaType,
-              status: "queued" as const,
-              progress: 0,
-            };
-          })
-          .filter((f): f is NonNullable<typeof f> => f !== null);
-        if (newFiles.length > 0) {
-          useCompressionStore.getState().addFiles(newFiles);
-        }
+        const resolved = await scanPaths(paths);
+        addResolvedPaths(resolved);
+      }
+    } catch {
+      // cancelled
+    }
+  };
+
+  const handleAddFolder = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true });
+      if (selected) {
+        const resolved = await scanPaths([selected as string]);
+        addResolvedPaths(resolved);
       }
     } catch {
       // cancelled
@@ -67,6 +88,14 @@ export function FileList() {
           </button>
           <button
             className="btn-secondary flex items-center gap-1.5 text-xs"
+            onClick={handleAddFolder}
+            disabled={isCompressing}
+          >
+            <FolderOpen size={14} />
+            Add Folder
+          </button>
+          <button
+            className="btn-secondary flex items-center gap-1.5 text-xs"
             onClick={clearFiles}
             disabled={isCompressing}
             style={{ color: "var(--error)" }}
@@ -87,7 +116,10 @@ export function FileList() {
       {/* Compress button */}
       {!isCompressing && files.some((f) => f.status === "queued") && (
         <div className="mt-4 flex justify-center">
-          <button className="btn-primary flex items-center gap-2 px-8 py-2.5 text-base">
+          <button
+            className="btn-primary flex items-center gap-2 px-8 py-2.5 text-base"
+            onClick={startCompression}
+          >
             <Play size={18} />
             Start Compression
           </button>

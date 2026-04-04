@@ -27,6 +27,7 @@ pub fn run() {
             commands::presets::save_preset,
             commands::presets::delete_preset,
             commands::presets::get_default_output_dir,
+            commands::scan::scan_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

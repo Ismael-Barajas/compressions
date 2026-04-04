@@ -80,4 +80,21 @@
   .btn-secondary:hover {
     border-color: var(--border-hover);
   }
+
+  .progress-indeterminate {
+    width: 40%;
+    animation: progress-slide 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(150%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }

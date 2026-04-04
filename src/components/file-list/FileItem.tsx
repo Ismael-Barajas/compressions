@@ -1,7 +1,8 @@
-import { Video, Image, X, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Video, Image, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw } from "lucide-react";
 import type { QueuedFile } from "../../types/compression";
 import { formatFileSize, getSavingsPercent } from "../../lib/fileUtils";
 import { useCompressionStore } from "../../stores/compressionStore";
+import { useCompression } from "../../hooks/useCompression";
 
 interface FileItemProps {
   file: QueuedFile;
@@ -9,7 +10,9 @@ interface FileItemProps {
 
 export function FileItem({ file }: FileItemProps) {
   const removeFile = useCompressionStore((s) => s.removeFile);
+  const retryFile = useCompressionStore((s) => s.retryFile);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
+  const { cancelFile } = useCompression();
 
   const statusIcon = {
     queued: null,
@@ -49,10 +52,14 @@ export function FileItem({ file }: FileItemProps) {
           <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
             {file.size > 0 && <span>{formatFileSize(file.size)}</span>}
             {file.result && file.result.success && (
-              <span style={{ color: "var(--success)" }}>
-                → {formatFileSize(file.result.outputSize)} (
-                {getSavingsPercent(file.result.inputSize, file.result.outputSize)}% saved)
-              </span>
+              file.result.outputSize >= file.result.inputSize ? (
+                <span style={{ color: "var(--text-muted)" }}>Already optimized</span>
+              ) : (
+                <span style={{ color: "var(--success)" }}>
+                  → {formatFileSize(file.result.outputSize)} (
+                  {getSavingsPercent(file.result.inputSize, file.result.outputSize)}% saved)
+                </span>
+              )
             )}
             {file.error && (
               <span style={{ color: "var(--error)" }}>{file.error}</span>
@@ -60,15 +67,42 @@ export function FileItem({ file }: FileItemProps) {
           </div>
         </div>
 
-        {/* Remove button */}
-        {!isCompressing && (
+        {/* Cancel / Retry / Remove button */}
+        {file.status === "processing" ? (
           <button
-            onClick={() => removeFile(file.id)}
+            onClick={() => cancelFile(file.id)}
             className="rounded p-1 transition-colors hover:opacity-70"
-            title="Remove file"
+            title="Cancel compression"
           >
-            <X size={16} style={{ color: "var(--text-muted)" }} />
+            <StopCircle size={16} style={{ color: "var(--error)" }} />
           </button>
+        ) : file.status === "error" ? (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => retryFile(file.id)}
+              className="rounded p-1 transition-colors hover:opacity-70"
+              title="Retry compression"
+            >
+              <RotateCcw size={16} style={{ color: "var(--accent)" }} />
+            </button>
+            <button
+              onClick={() => removeFile(file.id)}
+              className="rounded p-1 transition-colors hover:opacity-70"
+              title="Remove file"
+            >
+              <X size={16} style={{ color: "var(--text-muted)" }} />
+            </button>
+          </div>
+        ) : (
+          !isCompressing && (
+            <button
+              onClick={() => removeFile(file.id)}
+              className="rounded p-1 transition-colors hover:opacity-70"
+              title="Remove file"
+            >
+              <X size={16} style={{ color: "var(--text-muted)" }} />
+            </button>
+          )
         )}
       </div>
 
@@ -79,16 +113,23 @@ export function FileItem({ file }: FileItemProps) {
             className="h-1.5 overflow-hidden rounded-full"
             style={{ backgroundColor: "var(--bg-tertiary)" }}
           >
-            <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{
-                width: `${file.progress}%`,
-                backgroundColor: "var(--accent)",
-              }}
-            />
+            {file.progress > 0 ? (
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${file.progress}%`,
+                  backgroundColor: "var(--accent)",
+                }}
+              />
+            ) : (
+              <div
+                className="progress-indeterminate h-full rounded-full"
+                style={{ backgroundColor: "var(--accent)" }}
+              />
+            )}
           </div>
           <span className="mt-0.5 block text-right text-xs" style={{ color: "var(--text-muted)" }}>
-            {Math.round(file.progress)}%
+            {file.progress > 0 ? `${Math.round(file.progress)}%` : "Processing…"}
           </span>
         </div>
       )}

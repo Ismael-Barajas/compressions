@@ -45,10 +45,10 @@ pub async fn compress_video(
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
 
-    // Store child handle for cancellation
+    // Store child handle and output path for cancellation + cleanup
     {
         let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state.active_jobs.insert(job_id.clone(), child);
+        app_state.active_jobs.insert(job_id.clone(), (child, output.clone()));
     }
 
     let _ = on_progress.send(ProgressEvent::Started {
@@ -109,6 +109,8 @@ pub async fn compress_video(
                 if success {
                     let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
                 } else {
+                    // Process has fully exited — safe to delete the partial output file
+                    let _ = std::fs::remove_file(&output);
                     let _ = on_progress.send(ProgressEvent::Error {
                         job_id: job_id.clone(),
                         message: result.error.clone().unwrap_or_default(),
@@ -154,8 +156,9 @@ pub fn cancel_compression(
     job_id: String,
 ) -> Result<(), String> {
     let mut app_state = state.lock().map_err(|e| e.to_string())?;
-    if let Some(child) = app_state.active_jobs.remove(&job_id) {
+    if let Some((child, _)) = app_state.active_jobs.remove(&job_id) {
         child.kill().map_err(|e| format!("Failed to kill FFmpeg process: {}", e))?;
+        // Partial file cleanup happens in the Terminated event handler once the process exits
     }
     Ok(())
 }

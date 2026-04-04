@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::presets::{definitions::builtin_presets, storage};
 use crate::state::AppState;

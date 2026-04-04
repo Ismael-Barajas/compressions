@@ -41,6 +41,7 @@ interface CompressionStore {
   markComplete: (jobId: string, result: CompressionResult) => void;
   markError: (jobId: string, message: string) => void;
   setFileStatus: (id: string, status: QueuedFile["status"], jobId?: string) => void;
+  updateFileProbe: (id: string, info: { size: number }) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setOutputDir: (dir: string | null) => void;
@@ -48,6 +49,7 @@ interface CompressionStore {
   setActivePreset: (id: string | null) => void;
   toggleTheme: () => void;
   setIsCompressing: (value: boolean) => void;
+  retryFile: (id: string) => void;
 }
 
 function getInitialTheme(): "light" | "dark" {
@@ -80,6 +82,13 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     set((state) => ({ files: state.files.filter((f) => f.id !== id) })),
 
   clearFiles: () => set({ files: [] }),
+
+  updateFileProbe: (id, info) =>
+    set((state) => ({
+      files: state.files.map((f) =>
+        f.id === id ? { ...f, size: info.size } : f,
+      ),
+    })),
 
   updateProgress: (jobId, payload) =>
     set((state) => ({
@@ -139,6 +148,15 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     }),
 
   setIsCompressing: (value) => set({ isCompressing: value }),
+
+  retryFile: (id) =>
+    set((state) => ({
+      files: state.files.map((f) =>
+        f.id === id
+          ? { ...f, status: "queued" as const, progress: 0, error: undefined, result: undefined, jobId: undefined }
+          : f,
+      ),
+    })),
 }));
 
 export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS };

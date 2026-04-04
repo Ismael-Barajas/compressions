@@ -22,9 +22,9 @@ pub fn parse_progress_line(line: &str, total_duration: f64) -> Option<ParsedProg
     let hours: f64 = time_caps[1].parse().unwrap_or(0.0);
     let minutes: f64 = time_caps[2].parse().unwrap_or(0.0);
     let seconds: f64 = time_caps[3].parse().unwrap_or(0.0);
-    let centiseconds: f64 = time_caps[4].parse().unwrap_or(0.0);
+    let fractional: f64 = format!("0.{}", &time_caps[4]).parse().unwrap_or(0.0);
 
-    let current_time = hours * 3600.0 + minutes * 60.0 + seconds + centiseconds / 100.0;
+    let current_time = hours * 3600.0 + minutes * 60.0 + seconds + fractional;
 
     let percent = if total_duration > 0.0 {
         (current_time / total_duration * 100.0).min(100.0)

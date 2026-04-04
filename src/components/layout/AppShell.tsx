@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useCompressionStore } from "../../stores/compressionStore";
+import { probeFile } from "../../lib/commands";
 import { DropZone } from "../dropzone/DropZone";
 import { FileList } from "../file-list/FileList";
 import { VideoControls } from "../controls/VideoControls";
@@ -9,6 +11,19 @@ import { ResultsSummary } from "../output/ResultsSummary";
 
 export function AppShell() {
   const files = useCompressionStore((s) => s.files);
+  const updateFileProbe = useCompressionStore((s) => s.updateFileProbe);
+
+  // Probe newly added files to populate their size
+  useEffect(() => {
+    const unprobed = files.filter((f) => f.size === 0 && f.status === "queued");
+    for (const file of unprobed) {
+      probeFile(file.path)
+        .then((info) => updateFileProbe(file.id, { size: info.size }))
+        .catch(() => {
+          // Non-fatal — file is still compressible without size info
+        });
+    }
+  }, [files, updateFileProbe]);
   const hasFiles = files.length > 0;
   const hasVideos = files.some((f) => f.mediaType === "video");
   const hasImages = files.some((f) => f.mediaType === "image");

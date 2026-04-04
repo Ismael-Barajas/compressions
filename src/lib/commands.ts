@@ -35,15 +35,17 @@ export async function compressImage(
   input: string,
   output: string,
   options: ImageOptions,
+  onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult> {
-  return invoke("compress_image", { input, output, options });
+  return invoke("compress_image", { input, output, options, onProgress });
 }
 
 export async function compressImagesBatch(
   files: BatchEntry[],
   options: ImageOptions,
+  onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult[]> {
-  return invoke("compress_images_batch", { files, options });
+  return invoke("compress_images_batch", { files, options, onProgress });
 }
 
 export async function cancelCompression(jobId: string): Promise<void> {
@@ -72,4 +74,8 @@ export async function deletePreset(id: string): Promise<void> {
 
 export async function getDefaultOutputDir(): Promise<string> {
   return invoke("get_default_output_dir");
+}
+
+export async function scanPaths(paths: string[]): Promise<string[]> {
+  return invoke("scan_paths", { paths });
 }

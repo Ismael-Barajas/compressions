@@ -56,13 +56,28 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
             })
         }
         MediaType::Image => {
-            // Use the image crate to read dimensions
-            let path_clone = path.clone();
-            let dims = tokio::task::spawn_blocking(move || {
-                image::image_dimensions(&path_clone).ok()
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+            let ext = Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+
+            // AVIF: image crate can't decode AVIF, use FFprobe for dimensions
+            let resolution = if ext == "avif" {
+                let info = probe_video_info(&app, &path).await.ok();
+                info.and_then(|i| i.resolution)
+            } else {
+                let path_clone = path.clone();
+                let dims = tokio::task::spawn_blocking(move || {
+                    image::image_dimensions(&path_clone).ok()
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                dims.map(|(w, h)| crate::types::Resolution {
+                    width: w,
+                    height: h,
+                })
+            };
 
             Ok(FileInfo {
                 path,
@@ -70,10 +85,7 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
                 size,
                 media_type: MediaType::Image,
                 duration: None,
-                resolution: dims.map(|(w, h)| crate::types::Resolution {
-                    width: w,
-                    height: h,
-                }),
+                resolution,
                 codec_name: None,
             })
         }

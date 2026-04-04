@@ -21,6 +21,7 @@ pub enum ImageFormat {
     Png,
     WebP,
     Avif,
+    Gif,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,12 +99,14 @@ pub struct FileInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum ProgressEvent {
+    #[serde(rename_all = "camelCase")]
     Started {
         job_id: String,
         file_name: String,
     },
     Progress(ProgressPayload),
     Completed(CompressionResult),
+    #[serde(rename_all = "camelCase")]
     Error {
         job_id: String,
         message: String,

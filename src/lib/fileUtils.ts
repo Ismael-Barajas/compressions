@@ -43,14 +43,33 @@ export function getOutputFileName(
   const fileName = parts.pop() || "";
   const dotIndex = fileName.lastIndexOf(".");
   const name = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
-  const ext = format
-    ? `.${format.toLowerCase()}`
-    : dotIndex >= 0
-      ? fileName.slice(dotIndex)
-      : "";
+  const inputExt = dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : "";
+  // GIF inputs always output as GIF to preserve animation
+  const ext = inputExt === ".gif"
+    ? ".gif"
+    : format
+      ? `.${format.toLowerCase()}`
+      : inputExt;
   return `${name}_compressed${ext}`;
 }
 
 export function isValidMediaFile(filePath: string): boolean {
   return getMediaType(filePath) !== null;
+}
+
+export function getParentDir(filePath: string): string {
+  const sep = filePath.includes("\\") ? "\\" : "/";
+  const parts = filePath.split(sep);
+  parts.pop();
+  return parts.join(sep);
+}
+
+export function buildOutputPath(
+  inputPath: string,
+  outputDir: string,
+  format?: string,
+): string {
+  const sep = outputDir.includes("\\") ? "\\" : "/";
+  const outputName = getOutputFileName(inputPath, format);
+  return `${outputDir}${sep}${outputName}`;
 }

@@ -13,27 +13,30 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
     ];
 
     // Video codec
+    let codec_str = match opts.codec {
+        VideoCodec::H264 => "libx264",
+        VideoCodec::H265 => "libx265",
+        VideoCodec::AV1 => "libsvtav1",
+    };
     args.push("-c:v".into());
-    args.push(
-        match opts.codec {
-            VideoCodec::H264 => "libx264",
-            VideoCodec::H265 => "libx265",
-            VideoCodec::AV1 => "libsvtav1",
-        }
-        .into(),
-    );
+    args.push(codec_str.into());
+
+    // AV1 requires yuv420p pixel format
+    if matches!(opts.codec, VideoCodec::AV1) {
+        args.push("-pix_fmt".into());
+        args.push("yuv420p".into());
+    }
 
     // Quality (CRF)
     args.push("-crf".into());
     args.push(opts.crf.to_string());
 
-    // Resolution
+    // Resolution — downscale only, maintain aspect ratio, ensure even dimensions
     if let Some(ref res) = opts.resolution {
         args.push("-vf".into());
-        // Use -2 to ensure even dimensions (required by most codecs)
         args.push(format!(
-            "scale='min({},iw)':min'({},ih)':force_original_aspect_ratio=decrease",
-            res.width, res.height
+            "scale='min({w},iw)':'min({h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            w = res.width, h = res.height
         ));
     }
 

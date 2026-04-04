@@ -4,15 +4,17 @@ A cross-platform desktop app for compressing videos and images. Built with Tauri
 
 ## Features
 
-- Drag-and-drop file input
+- Drag-and-drop file and folder input
 - Video compression with H.264, H.265/HEVC, and AV1 codecs via FFmpeg
-- Image compression with JPEG (MozJPEG), PNG (oxipng), WebP, and AVIF
+- Image compression with JPEG (MozJPEG), PNG (oxipng), WebP, AVIF, and animated GIF
 - Advanced controls: quality/CRF, resolution, frame rate, audio codec/bitrate
+- Metadata preservation or stripping per-file (JPEG, WebP, PNG)
+- Automatic "already optimized" detection — original kept if output would be larger
 - Built-in presets (Web Optimized, High Quality, Small File Size, Social Media)
-- Batch processing with per-file progress
+- Batch processing with per-file progress bars
 - Before/after file size comparison
 - Dark/light theme
-- Saves to user-selected output location
+- Saves to source folder or user-selected output location
 
 ## Prerequisites
 
@@ -45,11 +47,13 @@ npx tauri icon path/to/your-icon.png
 ### Start development
 
 **macOS / Linux:**
+
 ```bash
 npm run tauri dev
 ```
 
 **Windows PowerShell** (Rust and NASM must be on PATH):
+
 ```powershell
 $env:PATH += ";$env:USERPROFILE\.cargo\bin;C:\Program Files\NASM"; npm run tauri dev
 ```
@@ -61,19 +65,20 @@ npm run tauri build
 ```
 
 Output:
+
 - Windows: `src-tauri/target/release/bundle/nsis/Compressions_0.1.0_x64-setup.exe`
 - macOS: `src-tauri/target/release/bundle/dmg/Compressions_0.1.0_aarch64.dmg`
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Framework | Tauri v2 |
-| Frontend | React 19 + TypeScript + Tailwind CSS |
-| Backend | Rust |
-| Video | FFmpeg (sidecar) |
-| Image | mozjpeg, oxipng, webp, ravif (native Rust) |
-| State | Zustand |
+| Layer     | Technology                                 |
+| --------- | ------------------------------------------ |
+| Framework | Tauri v2                                   |
+| Frontend  | React 19 + TypeScript + Tailwind CSS       |
+| Backend   | Rust                                       |
+| Video     | FFmpeg (sidecar)                           |
+| Image     | mozjpeg, oxipng, webp, ravif, gif (native Rust) |
+| State     | Zustand                                    |
 
 ## License
 

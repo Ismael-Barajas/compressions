@@ -3,7 +3,7 @@ export type MediaType = "video" | "image";
 export type VideoCodec = "H264" | "H265" | "AV1";
 export type AudioCodec = "AAC" | "Opus" | "Copy" | "None";
 
-export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif";
+export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif" | "Gif";
 
 export type FileStatus = "queued" | "processing" | "complete" | "error";
 
