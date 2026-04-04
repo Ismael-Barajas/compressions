@@ -55,6 +55,34 @@ npm run tauri build
 
 Prerequisites: Node 18+, Rust (rustup), NASM (`choco install nasm` / `brew install nasm`)
 
+## Grug Rules (Engineering Philosophy)
+
+These rules are drawn from the grug-brained developer philosophy. Take them seriously.
+
+**Complexity is the enemy.** Every abstraction, every layer, every indirection is a place for demons to hide. When complexity grows, things break in ways nobody understands. Fight it always.
+
+**Say no.** The best code is code not written. Before adding a feature, pattern, or abstraction, ask if it's actually needed. If forced to say yes, deliver 80% of the value with 20% of the code.
+
+**Don't abstract early.** Let the shape of the system emerge before cutting interfaces. Wrong abstractions made too early cause more pain than duplication. Sit with the duplication a while.
+
+**Keep refactors small.** Don't venture far from shore. Large rewrites fail. Small, incremental changes survive. If a refactor is getting big, stop and ship what you have.
+
+**Understand before touching.** Before removing or rewriting existing code, understand why it exists. Ugly code that works has earned its place. Don't tear it out willy nilly.
+
+**Integration tests over unit tests.** Unit tests break on every refactor and miss inter-component bugs. Integration tests catch real problems. Don't mock deeply — mocking hides what's actually broken.
+
+**Log everything important.** Log major branches, errors, and state transitions. A good log is worth more than a fancy debugger when things go wrong in production.
+
+**Name intermediate results.** Break complex conditionals into named variables. Readability and debuggability beat cleverness every time.
+
+**DRY is not a law.** Three similar lines is often better than a premature abstraction with five callbacks. Duplication you can see beats abstraction you can't understand.
+
+**Profile before optimizing.** Never optimize without a real performance profile. Network calls cost more than nested loops. Measure first.
+
+**Keep it where it's used.** Code that lives near where it's called is easier to understand than code split across files by type. Locality of behavior beats separation of concerns in small codebases.
+
+**Say "I don't understand this" out loud.** Admitting complexity is confusing is not weakness — it keeps complexity demons from winning. If the code is hard to explain, that's the code's fault.
+
 ## Phase Completion Checklist
 
 After completing every phase sub-task (e.g. 10.1, 10.2, 11.1):
