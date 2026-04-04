@@ -28,6 +28,10 @@ pub fn run() {
             commands::presets::delete_preset,
             commands::presets::get_default_output_dir,
             commands::scan::scan_paths,
+            commands::audio::extract_audio,
+            commands::audio::extract_audio_batch,
+            commands::gif::convert_video_to_gif,
+            commands::gif::convert_videos_to_gif_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

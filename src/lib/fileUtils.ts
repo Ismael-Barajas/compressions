@@ -64,6 +64,18 @@ export function getOutputFileName(
   return `${baseName || name}${ext}`;
 }
 
+const AUDIO_FORMAT_EXTENSIONS: Record<string, string> = {
+  Mp3: "mp3",
+  Aac: "m4a",
+  Flac: "flac",
+  Opus: "ogg",
+  Wav: "wav",
+};
+
+export function getAudioExtension(format: string): string {
+  return AUDIO_FORMAT_EXTENSIONS[format] || "mp3";
+}
+
 export function isValidMediaFile(filePath: string): boolean {
   return getMediaType(filePath) !== null;
 }

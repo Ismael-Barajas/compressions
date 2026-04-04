@@ -5,6 +5,23 @@ export type AudioCodec = "AAC" | "Opus" | "Copy" | "None";
 
 export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif" | "Gif";
 
+export type AudioOutputFormat = "Mp3" | "Aac" | "Flac" | "Opus" | "Wav";
+
+export interface AudioExtractionOptions {
+  format: AudioOutputFormat;
+  bitrate: string | null;
+  sampleRate: number | null;
+}
+
+export type DitherMode = "bayer" | "floyd_steinberg" | "none";
+
+export interface GifConversionOptions {
+  fps: number;
+  width: number | null;
+  maxColors: number;
+  dither: DitherMode;
+}
+
 export type FileStatus = "queued" | "processing" | "complete" | "error";
 
 export type OutputMode = "sameDir" | "subfolder" | "customDir";

@@ -8,7 +8,7 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-Phase 8 (bug fixes & quick wins) is complete. Phase 9+ (new media types, UX, persistence) is in progress — resume from **Phase 9.1: MP3 Audio Extraction**.
+Phase 8 (bug fixes & quick wins) is complete. Phase 9 (new media types) is in progress — resume from **Phase 9.3: PDF Compression (Ghostscript Sidecar)**.
 
 ## Stack
 
@@ -22,6 +22,7 @@ Phase 8 (bug fixes & quick wins) is complete. Phase 9+ (new media types, UX, per
 
 - Every new Tauri command must be registered in 3 places: `commands/mod.rs`, `lib.rs`, and `src/lib/commands.ts`
 - Videos compress sequentially (FFmpeg sidecar, CPU-bound); images compress in parallel (native Rust)
+- Audio extraction uses FFmpeg sidecar (`-vn` flag); triggered via right-click context menu on video files
 - Output path logic lives in `src/hooks/useCompression.ts` (`getOutputDirForFile`)
 - File name template logic lives in `src/lib/fileUtils.ts` (`getOutputFileName`)
 - `create_dir_all` is called in both `commands/image.rs` and `commands/video.rs` before writing output

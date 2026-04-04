@@ -166,14 +166,15 @@ fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), Stri
 }
 
 fn encode_gif(input: &str, output: &str) -> Result<(), String> {
-    use gif::{DecodeOptions, Encoder, Repeat};
+    use gif::{DecodeOptions, Encoder, Frame, Repeat};
     use std::fs::File;
 
     let in_file =
         File::open(input).map_err(|e| format!("Failed to open GIF input: {}", e))?;
 
+    // Decode to RGBA so we can re-quantize with imagequant
     let mut decode_opts = DecodeOptions::new();
-    decode_opts.set_color_output(gif::ColorOutput::Indexed);
+    decode_opts.set_color_output(gif::ColorOutput::RGBA);
 
     let mut decoder = decode_opts
         .read_info(in_file)
@@ -181,35 +182,100 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
 
     let width = decoder.width();
     let height = decoder.height();
-    let global_palette = decoder.global_palette().map(|p| p.to_vec());
 
-    // Collect all frames first
-    let mut frames: Vec<gif::Frame<'static>> = Vec::new();
+    // Collect all frames with their delays and dispose info
+    struct RawFrame {
+        rgba: Vec<u8>,
+        delay: u16,
+        left: u16,
+        top: u16,
+        width: u16,
+        height: u16,
+    }
+
+    let mut raw_frames: Vec<RawFrame> = Vec::new();
     while let Some(frame) = decoder
         .read_next_frame()
         .map_err(|e| format!("Failed to read GIF frame: {}", e))?
     {
-        frames.push(frame.clone().to_owned());
+        raw_frames.push(RawFrame {
+            rgba: frame.buffer.to_vec(),
+            delay: frame.delay,
+            left: frame.left,
+            top: frame.top,
+            width: frame.width,
+            height: frame.height,
+        });
     }
 
-    if frames.is_empty() {
+    if raw_frames.is_empty() {
         return Err("GIF has no frames".to_string());
     }
 
     let out_file =
         File::create(output).map_err(|e| format!("Failed to create GIF output: {}", e))?;
 
-    let palette = global_palette.as_deref().unwrap_or(&[]);
-    let mut encoder = Encoder::new(out_file, width, height, palette)
+    // Empty global palette — each frame gets its own local palette via imagequant
+    let mut encoder = Encoder::new(out_file, width, height, &[])
         .map_err(|e| format!("Failed to create GIF encoder: {}", e))?;
 
     encoder
         .set_repeat(Repeat::Infinite)
         .map_err(|e| format!("Failed to set GIF repeat: {}", e))?;
 
-    for frame in &frames {
+    let mut liq = imagequant::new();
+    liq.set_quality(0, 100).map_err(|e| format!("imagequant quality error: {}", e))?;
+
+    for raw in &raw_frames {
+        let fw = raw.width as usize;
+        let fh = raw.height as usize;
+        let pixel_count = fw * fh;
+
+        // Convert RGBA bytes to imagequant RGBA pixels
+        let pixels: Vec<imagequant::RGBA> = raw.rgba.chunks_exact(4)
+            .map(|c| imagequant::RGBA { r: c[0], g: c[1], b: c[2], a: c[3] })
+            .collect();
+
+        if pixels.len() != pixel_count {
+            // Fallback: skip quantization for malformed frames
+            continue;
+        }
+
+        let mut img = liq.new_image_borrowed(&pixels, fw, fh, 0.0)
+            .map_err(|e| format!("imagequant image error: {}", e))?;
+
+        let mut res = liq.quantize(&mut img)
+            .map_err(|e| format!("imagequant quantize error: {}", e))?;
+
+        res.set_dithering_level(1.0).map_err(|e| format!("imagequant dither error: {}", e))?;
+
+        let (palette_data, indexed_pixels) = res.remapped(&mut img)
+            .map_err(|e| format!("imagequant remap error: {}", e))?;
+
+        // Build palette bytes (RGB triples)
+        let mut palette_bytes: Vec<u8> = Vec::with_capacity(palette_data.len() * 3);
+        let mut transparent_idx: Option<u8> = None;
+        for (i, color) in palette_data.iter().enumerate() {
+            palette_bytes.push(color.r);
+            palette_bytes.push(color.g);
+            palette_bytes.push(color.b);
+            if color.a < 128 && transparent_idx.is_none() {
+                transparent_idx = Some(i as u8);
+            }
+        }
+
+        let mut frame = Frame::default();
+        frame.width = raw.width;
+        frame.height = raw.height;
+        frame.left = raw.left;
+        frame.top = raw.top;
+        frame.delay = raw.delay;
+        frame.palette = Some(palette_bytes);
+        frame.buffer = std::borrow::Cow::Owned(indexed_pixels);
+        frame.transparent = transparent_idx;
+
         encoder
-            .write_frame(frame)
+            .write_frame(&frame)
             .map_err(|e| format!("Failed to write GIF frame: {}", e))?;
     }
 

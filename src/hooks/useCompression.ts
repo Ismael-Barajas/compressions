@@ -3,10 +3,12 @@ import { Channel } from "@tauri-apps/api/core";
 import {
   compressVideosBatch,
   compressImagesBatch,
+  extractAudio,
+  convertVideoToGif,
   cancelCompression,
 } from "../lib/commands";
 import { useCompressionStore } from "../stores/compressionStore";
-import { buildOutputPath, getParentDir } from "../lib/fileUtils";
+import { buildOutputPath, getParentDir, getAudioExtension } from "../lib/fileUtils";
 import type { ProgressEvent, QueuedFile } from "../types/compression";
 
 export function useCompression() {
@@ -187,5 +189,142 @@ export function useCompression() {
     [markError],
   );
 
-  return { startCompression, cancelFile };
+  const extractAudioFromFile = useCallback(
+    async (file: QueuedFile) => {
+      const {
+        audioOptions,
+        outputDir,
+        outputMode,
+        subfolderName,
+        outputTemplate,
+      } = useCompressionStore.getState();
+
+      const parentDir = getParentDir(file.path);
+      const sep = parentDir.includes("\\") ? "\\" : "/";
+      let outDir: string;
+      switch (outputMode) {
+        case "subfolder":
+          outDir = `${parentDir}${sep}${subfolderName}`;
+          break;
+        case "customDir":
+          if (!outputDir) {
+            console.error("No output directory selected");
+            return;
+          }
+          outDir = outputDir;
+          break;
+        default:
+          outDir = parentDir;
+      }
+
+      const audioExt = getAudioExtension(audioOptions.format);
+      const output = buildOutputPath(file.path, outDir, audioExt, outputTemplate);
+
+      setIsCompressing(true);
+      setFileStatus(file.id, "processing", undefined);
+
+      const channel = new Channel<ProgressEvent>();
+      channel.onmessage = (event: ProgressEvent) => {
+        switch (event.event) {
+          case "started":
+            setFileStatus(file.id, "processing", event.data.jobId);
+            break;
+          case "progress":
+            updateProgress(event.data.jobId, event.data);
+            break;
+          case "completed":
+            markComplete(event.data.jobId, event.data);
+            break;
+          case "error":
+            markError(event.data.jobId, event.data.message);
+            break;
+        }
+      };
+
+      try {
+        await extractAudio(file.path, output, audioOptions, channel);
+      } catch (err) {
+        useCompressionStore.setState((state) => ({
+          files: state.files.map((f) =>
+            f.id === file.id
+              ? { ...f, status: "error" as const, error: String(err) }
+              : f,
+          ),
+        }));
+      } finally {
+        setIsCompressing(false);
+      }
+    },
+    [setFileStatus, updateProgress, markComplete, markError, setIsCompressing],
+  );
+
+  const convertToGif = useCallback(
+    async (file: QueuedFile) => {
+      const {
+        gifOptions,
+        outputDir,
+        outputMode,
+        subfolderName,
+        outputTemplate,
+      } = useCompressionStore.getState();
+
+      const parentDir = getParentDir(file.path);
+      const sep = parentDir.includes("\\") ? "\\" : "/";
+      let outDir: string;
+      switch (outputMode) {
+        case "subfolder":
+          outDir = `${parentDir}${sep}${subfolderName}`;
+          break;
+        case "customDir":
+          if (!outputDir) {
+            console.error("No output directory selected");
+            return;
+          }
+          outDir = outputDir;
+          break;
+        default:
+          outDir = parentDir;
+      }
+
+      const output = buildOutputPath(file.path, outDir, "gif", outputTemplate);
+
+      setIsCompressing(true);
+      setFileStatus(file.id, "processing", undefined);
+
+      const channel = new Channel<ProgressEvent>();
+      channel.onmessage = (event: ProgressEvent) => {
+        switch (event.event) {
+          case "started":
+            setFileStatus(file.id, "processing", event.data.jobId);
+            break;
+          case "progress":
+            updateProgress(event.data.jobId, event.data);
+            break;
+          case "completed":
+            markComplete(event.data.jobId, event.data);
+            break;
+          case "error":
+            markError(event.data.jobId, event.data.message);
+            break;
+        }
+      };
+
+      try {
+        await convertVideoToGif(file.path, output, gifOptions, channel);
+      } catch (err) {
+        useCompressionStore.setState((state) => ({
+          files: state.files.map((f) =>
+            f.id === file.id
+              ? { ...f, status: "error" as const, error: String(err) }
+              : f,
+          ),
+        }));
+      } finally {
+        setIsCompressing(false);
+      }
+    },
+    [setFileStatus, updateProgress, markComplete, markError, setIsCompressing],
+  );
+
+  return { startCompression, cancelFile, extractAudioFromFile, convertToGif };
 }

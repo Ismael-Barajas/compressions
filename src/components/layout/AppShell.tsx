@@ -6,6 +6,8 @@ import { FileList } from "../file-list/FileList";
 import { VideoControls } from "../controls/VideoControls";
 import { ImageControls } from "../controls/ImageControls";
 import { PresetSelector } from "../controls/PresetSelector";
+import { AudioControls } from "../controls/AudioControls";
+import { GifControls } from "../controls/GifControls";
 import { OutputSettings } from "../output/OutputSettings";
 import { ResultsSummary } from "../output/ResultsSummary";
 
@@ -56,6 +58,8 @@ export function AppShell() {
           <PresetSelector />
           {hasVideos && <VideoControls />}
           {hasImages && <ImageControls />}
+          {hasVideos && <AudioControls />}
+          {hasVideos && <GifControls />}
           <OutputSettings />
         </div>
       )}

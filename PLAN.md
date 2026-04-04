@@ -464,9 +464,9 @@ Automated cross-platform builds and releases.
 
 ---
 
-### 🔲 Phase 9 — New Media Capabilities (IN PROGRESS — paused before starting 9.1)
+### 🔲 Phase 9 — New Media Capabilities (IN PROGRESS — resume from 9.3)
 
-#### 🔲 9.1 MP3 Audio Extraction (Context Menu)
+#### ✅ 9.1 MP3 Audio Extraction (Context Menu)
 
 **Approach:** Right-click video → "Extract Audio". Uses FFmpeg with `-vn` flag.
 
@@ -484,25 +484,27 @@ Automated cross-platform builds and releases.
 - `src/components/file-list/FileItem.tsx` — Add right-click context menu on video files with "Extract Audio" option. Shows popover with AudioControls + Start button.
 - `src/lib/fileUtils.ts` — Handle audio output extensions.
 
-#### 9.2 GIF Compression & Video-to-GIF
+#### ✅ 9.2 GIF Compression & Video-to-GIF
 
-**Part A: Video-to-GIF** via FFmpeg two-pass palette approach.
+**Part A: Video-to-GIF** via FFmpeg two-pass palette approach. ✅
 
-**New files:**
-- `src-tauri/src/commands/gif.rs` — `convert_video_to_gif` command. Two-pass FFmpeg with palette generation. Progress uses existing `progress.rs` parser.
-- `src/components/controls/GifControls.tsx` — FPS, max width, color count, dither mode.
+**New files created:**
+- `src-tauri/src/commands/gif.rs` — `convert_video_to_gif` and `convert_videos_to_gif_batch`. Two-pass FFmpeg (palette generation + encoding). Progress via Channel.
+- `src/components/controls/GifControls.tsx` — FPS slider, max width dropdown, color count slider, dither mode selector.
 
-**Files to modify:**
-- `src-tauri/src/types.rs` — Add `GifConversionOptions { fps, width, max_colors, dither }`.
-- `src-tauri/src/ffmpeg/args.rs` — Add `build_video_to_gif_args()` using FFmpeg complex filter.
-- `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs` — Register.
-- `src/types/compression.ts`, `src/lib/commands.ts`, `src/stores/compressionStore.ts` — Types, wrapper, state.
-- `src/components/file-list/FileItem.tsx` — Add "Convert to GIF" to video context menu.
+**Files modified:**
+- `src-tauri/src/types.rs` — Added `GifConversionOptions`, `DitherMode` enum.
+- `src-tauri/src/ffmpeg/args.rs` — Added `build_gif_palette_args()` and `build_gif_encode_args()` with complex filtergraph.
+- `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs` — Registered gif commands.
+- `src/types/compression.ts`, `src/lib/commands.ts`, `src/stores/compressionStore.ts` — Added types, wrappers, `gifOptions` state.
+- `src/components/file-list/FileItem.tsx` — Added "Convert to GIF" to video right-click context menu.
+- `src/components/layout/AppShell.tsx` — Shows GifControls panel when videos are queued.
+- `src/hooks/useCompression.ts` — Added `convertToGif()` function with progress channel.
 
-**Part B: GIF Optimization** — Enhance `encode_gif()` at `image.rs:168`.
+**Part B: GIF Optimization** — Enhanced `encode_gif()` with `imagequant`. ✅
 
-- `src-tauri/Cargo.toml` — Add `imagequant = "4"` for palette optimization.
-- `src-tauri/src/compression/image.rs` — Add color quantization + frame deduplication in `encode_gif()`.
+- `src-tauri/Cargo.toml` — Added `imagequant = "4"`.
+- `src-tauri/src/compression/image.rs` — Rewrote `encode_gif()` to decode frames to RGBA, quantize each frame with imagequant for optimized palettes, and re-encode with per-frame local palettes and transparency support.
 
 **Real-time progress for video-to-GIF:** Automatic — FFmpeg emits `time=` during GIF encoding, `progress.rs` already parses it.
 

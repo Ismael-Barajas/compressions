@@ -2,6 +2,8 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
   VideoOptions,
   ImageOptions,
+  AudioExtractionOptions,
+  GifConversionOptions,
   CompressionResult,
   FileInfo,
   MediaType,
@@ -78,4 +80,38 @@ export async function getDefaultOutputDir(): Promise<string> {
 
 export async function scanPaths(paths: string[]): Promise<string[]> {
   return invoke("scan_paths", { paths });
+}
+
+export async function extractAudio(
+  input: string,
+  output: string,
+  options: AudioExtractionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult> {
+  return invoke("extract_audio", { input, output, options, onProgress });
+}
+
+export async function extractAudioBatch(
+  files: BatchEntry[],
+  options: AudioExtractionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult[]> {
+  return invoke("extract_audio_batch", { files, options, onProgress });
+}
+
+export async function convertVideoToGif(
+  input: string,
+  output: string,
+  options: GifConversionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult> {
+  return invoke("convert_video_to_gif", { input, output, options, onProgress });
+}
+
+export async function convertVideosToGifBatch(
+  files: BatchEntry[],
+  options: GifConversionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult[]> {
+  return invoke("convert_videos_to_gif_batch", { files, options, onProgress });
 }

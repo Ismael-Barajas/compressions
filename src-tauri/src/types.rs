@@ -25,6 +25,42 @@ pub enum ImageFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AudioOutputFormat {
+    Mp3,
+    Aac,
+    Flac,
+    Opus,
+    Wav,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioExtractionOptions {
+    pub format: AudioOutputFormat,
+    pub bitrate: Option<String>,
+    pub sample_rate: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DitherMode {
+    #[serde(rename = "bayer")]
+    Bayer,
+    #[serde(rename = "floyd_steinberg")]
+    FloydSteinberg,
+    #[serde(rename = "none")]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GifConversionOptions {
+    pub fps: u32,
+    pub width: Option<u32>,
+    pub max_colors: u32,
+    pub dither: DitherMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MediaType {
     #[serde(rename = "video")]
     Video,

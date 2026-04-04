@@ -3,6 +3,8 @@ import type {
   QueuedFile,
   VideoOptions,
   ImageOptions,
+  AudioExtractionOptions,
+  GifConversionOptions,
   CompressionResult,
   ProgressPayload,
   OutputMode,
@@ -26,10 +28,25 @@ const DEFAULT_IMAGE_OPTIONS: ImageOptions = {
   stripMetadata: true,
 };
 
+const DEFAULT_AUDIO_OPTIONS: AudioExtractionOptions = {
+  format: "Mp3",
+  bitrate: "192k",
+  sampleRate: null,
+};
+
+const DEFAULT_GIF_OPTIONS: GifConversionOptions = {
+  fps: 15,
+  width: null,
+  maxColors: 256,
+  dither: "floyd_steinberg",
+};
+
 interface CompressionStore {
   files: QueuedFile[];
   videoOptions: VideoOptions;
   imageOptions: ImageOptions;
+  audioOptions: AudioExtractionOptions;
+  gifOptions: GifConversionOptions;
   outputDir: string | null;
   outputMode: OutputMode;
   subfolderName: string;
@@ -48,6 +65,8 @@ interface CompressionStore {
   updateFileProbe: (id: string, info: { size: number; resolution?: Resolution | null; duration?: number | null }) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
+  setAudioOptions: (opts: Partial<AudioExtractionOptions>) => void;
+  setGifOptions: (opts: Partial<GifConversionOptions>) => void;
   setOutputDir: (dir: string | null) => void;
   setOutputMode: (mode: OutputMode) => void;
   setSubfolderName: (name: string) => void;
@@ -78,6 +97,8 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   files: [],
   videoOptions: DEFAULT_VIDEO_OPTIONS,
   imageOptions: DEFAULT_IMAGE_OPTIONS,
+  audioOptions: DEFAULT_AUDIO_OPTIONS,
+  gifOptions: DEFAULT_GIF_OPTIONS,
   outputDir: null,
   outputMode: "sameDir",
   subfolderName: "compressed",
@@ -151,6 +172,16 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
       activePreset: null,
     })),
 
+  setAudioOptions: (opts) =>
+    set((state) => ({
+      audioOptions: { ...state.audioOptions, ...opts },
+    })),
+
+  setGifOptions: (opts) =>
+    set((state) => ({
+      gifOptions: { ...state.gifOptions, ...opts },
+    })),
+
   setOutputDir: (dir) => set({ outputDir: dir }),
 
   setOutputMode: (mode) => set({ outputMode: mode }),
@@ -183,4 +214,4 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     })),
 }));
 
-export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS };
+export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_GIF_OPTIONS };
