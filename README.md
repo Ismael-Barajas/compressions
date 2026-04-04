@@ -1,20 +1,22 @@
 # Compressions
 
-A cross-platform desktop app for compressing videos and images. Built with Tauri v2, React, TypeScript, and Rust.
+A cross-platform desktop app for compressing videos, images, and PDFs. Built with Tauri v2, React, TypeScript, and Rust.
 
 ## Features
 
 - Drag-and-drop file and folder input
-- Video compression with H.264, H.265/HEVC, and AV1 codecs via FFmpeg
-- Image compression with JPEG (MozJPEG), PNG (oxipng), WebP, AVIF, and animated GIF
-- Advanced controls: quality/CRF, resolution, frame rate, audio codec/bitrate
-- Metadata preservation or stripping per-file (JPEG, WebP, PNG)
-- Automatic "already optimized" detection — original kept if output would be larger
+- **Video compression** — H.264, H.265/HEVC, AV1 via FFmpeg; control CRF, resolution, frame rate, audio codec/bitrate
+- **Image compression** — JPEG (MozJPEG), PNG (oxipng), WebP, AVIF, animated GIF; resize, strip metadata
+- **PDF compression** — Ghostscript-powered with Screen / Ebook / Printer / Prepress quality presets and DPI override
+- **Audio extraction** — Extract MP3, AAC, FLAC, Opus, or WAV from any video via right-click context menu
+- **Video-to-GIF conversion** — Two-pass palette FFmpeg approach with FPS, width, color count, and dither controls
 - Built-in presets (Web Optimized, High Quality, Small File Size, Social Media)
-- Batch processing with per-file progress bars
+- Batch processing with per-file progress bars (indeterminate for PDF)
+- Output modes: same folder, subfolder, or custom directory
+- Customizable output filename templates (`{name}`, `{date}`, `{time}`)
+- Automatic "already optimized" detection — original kept if output would be larger
 - Before/after file size comparison
 - Dark/light theme
-- Saves to source folder or user-selected output location
 
 ## Prerequisites
 
@@ -30,13 +32,16 @@ A cross-platform desktop app for compressing videos and images. Built with Tauri
 # Install frontend dependencies
 npm install
 
-# Download FFmpeg binaries for your platform
-# macOS / Git Bash:
-bash scripts/download-ffmpeg.sh
+# Download FFmpeg sidecars
+bash scripts/download-ffmpeg.sh        # macOS / Linux / Git Bash
+powershell scripts/download-ffmpeg.ps1 # Windows PowerShell
 
-# Windows PowerShell:
-powershell scripts/download-ffmpeg.ps1
+# Download Ghostscript sidecars (required for PDF compression)
+bash scripts/download-gs.sh            # macOS / Linux / Git Bash
+powershell scripts/download-gs.ps1     # Windows PowerShell (requires 7-Zip)
 ```
+
+> **Windows note:** `download-gs.ps1` requires [7-Zip](https://www.7-zip.org/) to extract the Ghostscript installer (`choco install 7zip`).
 
 ### Generate app icons
 
@@ -71,14 +76,15 @@ Output:
 
 ## Tech Stack
 
-| Layer     | Technology                                 |
-| --------- | ------------------------------------------ |
-| Framework | Tauri v2                                   |
-| Frontend  | React 19 + TypeScript + Tailwind CSS       |
-| Backend   | Rust                                       |
-| Video     | FFmpeg (sidecar)                           |
+| Layer     | Technology                                      |
+| --------- | ----------------------------------------------- |
+| Framework | Tauri v2                                        |
+| Frontend  | React 19 + TypeScript + Tailwind CSS            |
+| Backend   | Rust                                            |
+| Video     | FFmpeg sidecar                                  |
 | Image     | mozjpeg, oxipng, webp, ravif, gif (native Rust) |
-| State     | Zustand                                    |
+| PDF       | Ghostscript sidecar                             |
+| State     | Zustand                                         |
 
 ## License
 

@@ -38,7 +38,11 @@
     ],
     "externalBin": [
       "binaries/ffmpeg",
-      "binaries/ffprobe"
+      "binaries/ffprobe",
+      "binaries/gs"
+    ],
+    "resources": [
+      "binaries/gs-res/**/*"
     ],
     "windows": {
       "nsis": {

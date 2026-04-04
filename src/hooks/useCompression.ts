@@ -3,6 +3,7 @@ import { Channel } from "@tauri-apps/api/core";
 import {
   compressVideosBatch,
   compressImagesBatch,
+  compressPdfsBatch,
   extractAudio,
   convertVideoToGif,
   cancelCompression,
@@ -23,6 +24,7 @@ export function useCompression() {
       files,
       videoOptions,
       imageOptions,
+      pdfOptions,
       outputDir,
       outputMode,
       subfolderName,
@@ -42,6 +44,7 @@ export function useCompression() {
     try {
       const videoFiles = queued.filter((f) => f.mediaType === "video");
       const imageFiles = queued.filter((f) => f.mediaType === "image");
+      const pdfFiles = queued.filter((f) => f.mediaType === "pdf");
 
       const getOutputDirForFile = (file: QueuedFile) => {
         const parentDir = getParentDir(file.path);
@@ -158,6 +161,56 @@ export function useCompression() {
                     ),
                   }));
                 }
+              }
+            }
+          })(),
+        );
+      }
+
+      // --- PDF batch (sequential, indeterminate progress) ---
+      if (pdfFiles.length > 0) {
+        promises.push(
+          (async () => {
+            const pdfBatch = pdfFiles.map((f) => ({
+              input: f.path,
+              output: buildOutputPath(f.path, getOutputDirForFile(f), "pdf", outputTemplate),
+            }));
+
+            const pdfFileIds = pdfFiles.map((f) => f.id);
+            let pdfIndex = 0;
+
+            const channel = new Channel<ProgressEvent>();
+            channel.onmessage = (event: ProgressEvent) => {
+              switch (event.event) {
+                case "started": {
+                  const fileId = pdfFileIds[pdfIndex];
+                  if (fileId) {
+                    setFileStatus(fileId, "processing", event.data.jobId);
+                  }
+                  pdfIndex++;
+                  break;
+                }
+                case "completed":
+                  markComplete(event.data.jobId, event.data);
+                  break;
+                case "error":
+                  markError(event.data.jobId, event.data.message);
+                  break;
+              }
+            };
+
+            try {
+              await compressPdfsBatch(pdfBatch, pdfOptions, channel);
+            } catch (err) {
+              for (let i = pdfIndex; i < pdfFileIds.length; i++) {
+                const fid = pdfFileIds[i];
+                useCompressionStore.setState((state) => ({
+                  files: state.files.map((f) =>
+                    f.id === fid
+                      ? { ...f, status: "error" as const, error: String(err) }
+                      : f,
+                  ),
+                }));
               }
             }
           })(),

@@ -32,6 +32,8 @@ pub fn run() {
             commands::audio::extract_audio_batch,
             commands::gif::convert_video_to_gif,
             commands::gif::convert_videos_to_gif_batch,
+            commands::pdf::compress_pdf,
+            commands::pdf::compress_pdfs_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

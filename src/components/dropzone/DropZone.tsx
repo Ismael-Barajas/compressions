@@ -113,6 +113,7 @@ export function DropZone() {
             extensions: [
               "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v",
               "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif",
+              "pdf",
             ],
           },
           {
@@ -122,6 +123,10 @@ export function DropZone() {
           {
             name: "Image Files",
             extensions: ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif"],
+          },
+          {
+            name: "PDF Files",
+            extensions: ["pdf"],
           },
         ],
       });
@@ -152,7 +157,7 @@ export function DropZone() {
         or click to browse
       </p>
       <p className="mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
-        Supports MP4, MKV, AVI, MOV, WebM, JPG, PNG, WebP, AVIF, and more
+        Supports MP4, MKV, AVI, MOV, WebM, JPG, PNG, WebP, AVIF, PDF, and more
       </p>
       <div className="mt-4 flex items-center gap-2">
         <button

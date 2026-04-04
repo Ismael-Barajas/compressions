@@ -24,6 +24,8 @@ pub fn detect_media_type(path: String) -> Result<MediaType, String> {
         Ok(MediaType::Video)
     } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         Ok(MediaType::Image)
+    } else if ext == "pdf" {
+        Ok(MediaType::Pdf)
     } else {
         Err(format!("Unsupported file type: .{}", ext))
     }
@@ -53,6 +55,17 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
                 duration: info.duration,
                 resolution: info.resolution,
                 codec_name: info.codec_name,
+            })
+        }
+        MediaType::Pdf => {
+            Ok(FileInfo {
+                path,
+                file_name,
+                size,
+                media_type: MediaType::Pdf,
+                duration: None,
+                resolution: None,
+                codec_name: None,
             })
         }
         MediaType::Image => {

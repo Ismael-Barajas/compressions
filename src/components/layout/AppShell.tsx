@@ -8,6 +8,7 @@ import { ImageControls } from "../controls/ImageControls";
 import { PresetSelector } from "../controls/PresetSelector";
 import { AudioControls } from "../controls/AudioControls";
 import { GifControls } from "../controls/GifControls";
+import { PdfControls } from "../controls/PdfControls";
 import { OutputSettings } from "../output/OutputSettings";
 import { ResultsSummary } from "../output/ResultsSummary";
 
@@ -33,6 +34,7 @@ export function AppShell() {
   const hasFiles = files.length > 0;
   const hasVideos = files.some((f) => f.mediaType === "video");
   const hasImages = files.some((f) => f.mediaType === "image");
+  const hasPdfs = files.some((f) => f.mediaType === "pdf");
   const allComplete = hasFiles && files.every((f) => f.status === "complete" || f.status === "error");
 
   return (
@@ -60,6 +62,7 @@ export function AppShell() {
           {hasImages && <ImageControls />}
           {hasVideos && <AudioControls />}
           {hasVideos && <GifControls />}
+          {hasPdfs && <PdfControls />}
           <OutputSettings />
         </div>
       )}

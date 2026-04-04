@@ -4,6 +4,7 @@ import type {
   ImageOptions,
   AudioExtractionOptions,
   GifConversionOptions,
+  PdfOptions,
   CompressionResult,
   FileInfo,
   MediaType,
@@ -114,4 +115,21 @@ export async function convertVideosToGifBatch(
   onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult[]> {
   return invoke("convert_videos_to_gif_batch", { files, options, onProgress });
+}
+
+export async function compressPdf(
+  input: string,
+  output: string,
+  options: PdfOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult> {
+  return invoke("compress_pdf", { input, output, options, onProgress });
+}
+
+export async function compressPdfsBatch(
+  files: BatchEntry[],
+  options: PdfOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult[]> {
+  return invoke("compress_pdfs_batch", { files, options, onProgress });
 }

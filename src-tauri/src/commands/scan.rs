@@ -10,12 +10,16 @@ const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
 ];
 
+const PDF_EXTENSIONS: &[&str] = &["pdf"];
+
 fn is_media_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|ext| {
             let ext = ext.to_lowercase();
-            VIDEO_EXTENSIONS.contains(&ext.as_str()) || IMAGE_EXTENSIONS.contains(&ext.as_str())
+            VIDEO_EXTENSIONS.contains(&ext.as_str())
+                || IMAGE_EXTENSIONS.contains(&ext.as_str())
+                || PDF_EXTENSIONS.contains(&ext.as_str())
         })
         .unwrap_or(false)
 }

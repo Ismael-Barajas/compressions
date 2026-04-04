@@ -1,4 +1,4 @@
-export type MediaType = "video" | "image";
+export type MediaType = "video" | "image" | "pdf";
 
 export type VideoCodec = "H264" | "H265" | "AV1";
 export type AudioCodec = "AAC" | "Opus" | "Copy" | "None";
@@ -11,6 +11,13 @@ export interface AudioExtractionOptions {
   format: AudioOutputFormat;
   bitrate: string | null;
   sampleRate: number | null;
+}
+
+export type PdfQuality = "screen" | "ebook" | "printer" | "prepress";
+
+export interface PdfOptions {
+  quality: PdfQuality;
+  dpi: number | null;
 }
 
 export type DitherMode = "bayer" | "floyd_steinberg" | "none";

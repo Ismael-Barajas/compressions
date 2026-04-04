@@ -5,6 +5,7 @@ import type {
   ImageOptions,
   AudioExtractionOptions,
   GifConversionOptions,
+  PdfOptions,
   CompressionResult,
   ProgressPayload,
   OutputMode,
@@ -41,12 +42,18 @@ const DEFAULT_GIF_OPTIONS: GifConversionOptions = {
   dither: "floyd_steinberg",
 };
 
+const DEFAULT_PDF_OPTIONS: PdfOptions = {
+  quality: "ebook",
+  dpi: null,
+};
+
 interface CompressionStore {
   files: QueuedFile[];
   videoOptions: VideoOptions;
   imageOptions: ImageOptions;
   audioOptions: AudioExtractionOptions;
   gifOptions: GifConversionOptions;
+  pdfOptions: PdfOptions;
   outputDir: string | null;
   outputMode: OutputMode;
   subfolderName: string;
@@ -67,6 +74,7 @@ interface CompressionStore {
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setAudioOptions: (opts: Partial<AudioExtractionOptions>) => void;
   setGifOptions: (opts: Partial<GifConversionOptions>) => void;
+  setPdfOptions: (opts: Partial<PdfOptions>) => void;
   setOutputDir: (dir: string | null) => void;
   setOutputMode: (mode: OutputMode) => void;
   setSubfolderName: (name: string) => void;
@@ -99,6 +107,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   imageOptions: DEFAULT_IMAGE_OPTIONS,
   audioOptions: DEFAULT_AUDIO_OPTIONS,
   gifOptions: DEFAULT_GIF_OPTIONS,
+  pdfOptions: DEFAULT_PDF_OPTIONS,
   outputDir: null,
   outputMode: "sameDir",
   subfolderName: "compressed",
@@ -182,6 +191,11 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
       gifOptions: { ...state.gifOptions, ...opts },
     })),
 
+  setPdfOptions: (opts) =>
+    set((state) => ({
+      pdfOptions: { ...state.pdfOptions, ...opts },
+    })),
+
   setOutputDir: (dir) => set({ outputDir: dir }),
 
   setOutputMode: (mode) => set({ outputMode: mode }),
@@ -214,4 +228,4 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     })),
 }));
 
-export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_GIF_OPTIONS };
+export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };

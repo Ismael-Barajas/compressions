@@ -8,12 +8,12 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-Phase 8 (bug fixes & quick wins) is complete. Phase 9 (new media types) is in progress — resume from **Phase 9.3: PDF Compression (Ghostscript Sidecar)**.
+Phase 9 (new media capabilities) is complete. Phase 10+ (UX enhancements) is next — resume from **Phase 10.1: Add Files While Compressing**.
 
 ## Stack
 
 - **Frontend:** React 19, TypeScript, Tailwind CSS, Zustand
-- **Backend:** Rust (Tauri v2), FFmpeg/FFprobe sidecars, Ghostscript sidecar (planned)
+- **Backend:** Rust (Tauri v2), FFmpeg/FFprobe sidecars, Ghostscript (system-installed)
 - **Image encoding:** mozjpeg, oxipng, webp, ravif, gif crates (native Rust)
 - **State:** Zustand store (`src/stores/compressionStore.ts`)
 - **Progress:** Tauri `Channel<ProgressEvent>` from Rust → frontend
@@ -25,6 +25,7 @@ Phase 8 (bug fixes & quick wins) is complete. Phase 9 (new media types) is in pr
 - Audio extraction uses FFmpeg sidecar (`-vn` flag); triggered via right-click context menu on video files
 - Output path logic lives in `src/hooks/useCompression.ts` (`getOutputDirForFile`)
 - File name template logic lives in `src/lib/fileUtils.ts` (`getOutputFileName`)
+- PDF compression uses Ghostscript sidecar (sequential, indeterminate progress)
 - `create_dir_all` is called in both `commands/image.rs` and `commands/video.rs` before writing output
 
 ## Dev Setup
@@ -38,6 +39,12 @@ powershell scripts/download-ffmpeg.ps1
 
 # Download FFmpeg sidecars (macOS/Linux)
 bash scripts/download-ffmpeg.sh
+
+# Download Ghostscript sidecar (Windows)
+powershell scripts/download-gs.ps1
+
+# Download Ghostscript sidecar (macOS/Linux)
+bash scripts/download-gs.sh
 
 # Run dev server
 npm run tauri dev

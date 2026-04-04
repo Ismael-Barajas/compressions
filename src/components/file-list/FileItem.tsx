@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Video, Image, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
+import { Video, Image, FileText, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
 import type { QueuedFile } from "../../types/compression";
 import { formatFileSize, getSavingsPercent } from "../../lib/fileUtils";
 import { useCompressionStore } from "../../stores/compressionStore";
@@ -75,6 +75,8 @@ export function FileItem({ file }: FileItemProps) {
           {/* Media type icon */}
           {file.mediaType === "video" ? (
             <Video size={18} style={{ color: "var(--text-muted)" }} />
+          ) : file.mediaType === "pdf" ? (
+            <FileText size={18} style={{ color: "var(--text-muted)" }} />
           ) : (
             <Image size={18} style={{ color: "var(--text-muted)" }} />
           )}

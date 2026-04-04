@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/gsdll64.dll": "./"
+    }
+  }
+}

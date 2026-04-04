@@ -8,10 +8,13 @@ const IMAGE_EXTENSIONS = new Set([
   ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif",
 ]);
 
+const PDF_EXTENSIONS = new Set([".pdf"]);
+
 export function getMediaType(filePath: string): MediaType | null {
   const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
   if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (PDF_EXTENSIONS.has(ext)) return "pdf";
   return null;
 }
 

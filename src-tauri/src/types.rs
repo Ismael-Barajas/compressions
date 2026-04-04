@@ -61,11 +61,32 @@ pub struct GifConversionOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PdfQuality {
+    #[serde(rename = "screen")]
+    Screen,
+    #[serde(rename = "ebook")]
+    Ebook,
+    #[serde(rename = "printer")]
+    Printer,
+    #[serde(rename = "prepress")]
+    Prepress,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfOptions {
+    pub quality: PdfQuality,
+    pub dpi: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MediaType {
     #[serde(rename = "video")]
     Video,
     #[serde(rename = "image")]
     Image,
+    #[serde(rename = "pdf")]
+    Pdf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
