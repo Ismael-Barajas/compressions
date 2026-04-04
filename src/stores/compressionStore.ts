@@ -5,6 +5,8 @@ import type {
   ImageOptions,
   CompressionResult,
   ProgressPayload,
+  OutputMode,
+  Resolution,
 } from "../types/compression";
 
 const DEFAULT_VIDEO_OPTIONS: VideoOptions = {
@@ -29,7 +31,9 @@ interface CompressionStore {
   videoOptions: VideoOptions;
   imageOptions: ImageOptions;
   outputDir: string | null;
-  sameAsSource: boolean;
+  outputMode: OutputMode;
+  subfolderName: string;
+  outputTemplate: string;
   activePreset: string | null;
   theme: "light" | "dark";
   isCompressing: boolean;
@@ -41,11 +45,13 @@ interface CompressionStore {
   markComplete: (jobId: string, result: CompressionResult) => void;
   markError: (jobId: string, message: string) => void;
   setFileStatus: (id: string, status: QueuedFile["status"], jobId?: string) => void;
-  updateFileProbe: (id: string, info: { size: number }) => void;
+  updateFileProbe: (id: string, info: { size: number; resolution?: Resolution | null; duration?: number | null }) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setOutputDir: (dir: string | null) => void;
-  setSameAsSource: (value: boolean) => void;
+  setOutputMode: (mode: OutputMode) => void;
+  setSubfolderName: (name: string) => void;
+  setOutputTemplate: (template: string) => void;
   setActivePreset: (id: string | null) => void;
   toggleTheme: () => void;
   setIsCompressing: (value: boolean) => void;
@@ -61,12 +67,21 @@ function getInitialTheme(): "light" | "dark" {
   return "light";
 }
 
+function getStoredTemplate(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("compressions-output-template") || "{name}_compressed";
+  }
+  return "{name}_compressed";
+}
+
 export const useCompressionStore = create<CompressionStore>((set) => ({
   files: [],
   videoOptions: DEFAULT_VIDEO_OPTIONS,
   imageOptions: DEFAULT_IMAGE_OPTIONS,
   outputDir: null,
-  sameAsSource: true,
+  outputMode: "sameDir",
+  subfolderName: "compressed",
+  outputTemplate: getStoredTemplate(),
   activePreset: null,
   theme: getInitialTheme(),
   isCompressing: false,
@@ -86,7 +101,9 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   updateFileProbe: (id, info) =>
     set((state) => ({
       files: state.files.map((f) =>
-        f.id === id ? { ...f, size: info.size } : f,
+        f.id === id
+          ? { ...f, size: info.size, resolution: info.resolution ?? f.resolution, duration: info.duration ?? f.duration }
+          : f,
       ),
     })),
 
@@ -136,7 +153,14 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
 
   setOutputDir: (dir) => set({ outputDir: dir }),
 
-  setSameAsSource: (value) => set({ sameAsSource: value }),
+  setOutputMode: (mode) => set({ outputMode: mode }),
+
+  setSubfolderName: (name) => set({ subfolderName: name }),
+
+  setOutputTemplate: (template) => {
+    localStorage.setItem("compressions-output-template", template);
+    set({ outputTemplate: template });
+  },
 
   setActivePreset: (id) => set({ activePreset: id }),
 

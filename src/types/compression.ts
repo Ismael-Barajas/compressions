@@ -7,6 +7,8 @@ export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif" | "Gif";
 
 export type FileStatus = "queued" | "processing" | "complete" | "error";
 
+export type OutputMode = "sameDir" | "subfolder" | "customDir";
+
 export interface Resolution {
   width: number;
   height: number;
@@ -68,6 +70,8 @@ export interface QueuedFile {
   mediaType: MediaType;
   status: FileStatus;
   progress: number;
+  resolution?: Resolution | null;
+  duration?: number | null;
   jobId?: string;
   result?: CompressionResult;
   error?: string;

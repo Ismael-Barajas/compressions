@@ -37,6 +37,7 @@ export function getSavingsPercent(inputSize: number, outputSize: number): number
 export function getOutputFileName(
   inputPath: string,
   format?: string,
+  template: string = "{name}_compressed",
 ): string {
   const sep = inputPath.includes("\\") ? "\\" : "/";
   const parts = inputPath.split(sep);
@@ -50,7 +51,17 @@ export function getOutputFileName(
     : format
       ? `.${format.toLowerCase()}`
       : inputExt;
-  return `${name}_compressed${ext}`;
+
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+
+  const baseName = template
+    .replace(/\{name\}/g, name)
+    .replace(/\{date\}/g, date)
+    .replace(/\{time\}/g, time);
+
+  return `${baseName || name}${ext}`;
 }
 
 export function isValidMediaFile(filePath: string): boolean {
@@ -68,8 +79,9 @@ export function buildOutputPath(
   inputPath: string,
   outputDir: string,
   format?: string,
+  template?: string,
 ): string {
   const sep = outputDir.includes("\\") ? "\\" : "/";
-  const outputName = getOutputFileName(inputPath, format);
+  const outputName = getOutputFileName(inputPath, format, template);
   return `${outputDir}${sep}${outputName}`;
 }

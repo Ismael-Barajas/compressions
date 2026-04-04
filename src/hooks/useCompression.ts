@@ -22,13 +22,15 @@ export function useCompression() {
       videoOptions,
       imageOptions,
       outputDir,
-      sameAsSource,
+      outputMode,
+      subfolderName,
+      outputTemplate,
     } = useCompressionStore.getState();
 
     const queued = files.filter((f) => f.status === "queued");
     if (queued.length === 0) return;
 
-    if (!sameAsSource && !outputDir) {
+    if (outputMode === "customDir" && !outputDir) {
       console.error("No output directory selected");
       return;
     }
@@ -39,8 +41,18 @@ export function useCompression() {
       const videoFiles = queued.filter((f) => f.mediaType === "video");
       const imageFiles = queued.filter((f) => f.mediaType === "image");
 
-      const getOutputDir = (file: QueuedFile) =>
-        sameAsSource ? getParentDir(file.path) : outputDir!;
+      const getOutputDirForFile = (file: QueuedFile) => {
+        const parentDir = getParentDir(file.path);
+        const sep = parentDir.includes("\\") ? "\\" : "/";
+        switch (outputMode) {
+          case "subfolder":
+            return `${parentDir}${sep}${subfolderName}`;
+          case "customDir":
+            return outputDir!;
+          default:
+            return parentDir;
+        }
+      };
 
       const promises: Promise<void>[] = [];
 
@@ -50,7 +62,7 @@ export function useCompression() {
           (async () => {
             const videoBatch = videoFiles.map((f) => ({
               input: f.path,
-              output: buildOutputPath(f.path, getOutputDir(f)),
+              output: buildOutputPath(f.path, getOutputDirForFile(f), undefined, outputTemplate),
             }));
 
             const videoFileIds = videoFiles.map((f) => f.id);
@@ -105,7 +117,7 @@ export function useCompression() {
             const imageFormat = imageOptions.format.toLowerCase();
             const imageBatch = imageFiles.map((f) => ({
               input: f.path,
-              output: buildOutputPath(f.path, getOutputDir(f), imageFormat),
+              output: buildOutputPath(f.path, getOutputDirForFile(f), imageFormat, outputTemplate),
             }));
 
             const channel = new Channel<ProgressEvent>();

@@ -416,9 +416,9 @@ Automated cross-platform builds and releases.
 
 ---
 
-### Phase 8 — Bug Fixes & Quick Wins
+### ✅ Phase 8 — Bug Fixes & Quick Wins
 
-#### 8.1 AVIF Input Support (Bug Fix)
+#### ✅ 8.1 AVIF Input Support (Bug Fix)
 
 **Problem:** `image` crate in `Cargo.toml` only enables `["jpeg", "png", "webp", "gif"]`. `image::open()` at `src-tauri/src/compression/image.rs:20` fails for AVIF inputs. The UI falsely claims AVIF support.
 
@@ -431,7 +431,7 @@ Automated cross-platform builds and releases.
 
 **Transparency:** FFmpeg preserves RGBA when outputting to PNG. `encode_avif()` at `image.rs:143` already uses `img.to_rgba8()`, so alpha channels flow through.
 
-#### 8.2 Pixel Dimensions in Preview
+#### ✅ 8.2 Pixel Dimensions in Preview
 
 **Problem:** File items only show name and size. Resolution is already probed by `probe_file` but not passed to the UI.
 
@@ -441,7 +441,7 @@ Automated cross-platform builds and releases.
 - `src/components/layout/AppShell.tsx` — Pass `resolution` and `duration` from probe result to `updateFileProbe`.
 - `src/components/file-list/FileItem.tsx` — After file size, render `WxH` badge (e.g., `1920×1080`). For videos, also show duration as `mm:ss`.
 
-#### 8.3 Subfolder Export Option
+#### ✅ 8.3 Subfolder Export Option
 
 **Problem:** Output can only go to same directory or custom directory. Users want a "subfolder within source dir" option.
 
@@ -452,7 +452,7 @@ Automated cross-platform builds and releases.
 - `src/components/output/OutputSettings.tsx` — Replace checkbox with 3 radio options. Show editable subfolder name when "subfolder" selected.
 - `src-tauri/src/commands/image.rs` and `video.rs` — Add `std::fs::create_dir_all()` on output parent dir before writing.
 
-#### 8.4 Customizable Output File Name Format
+#### ✅ 8.4 Customizable Output File Name Format
 
 **Problem:** Hardcoded `{name}_compressed.{ext}` pattern at `fileUtils.ts:53`.
 
@@ -464,9 +464,9 @@ Automated cross-platform builds and releases.
 
 ---
 
-### Phase 9 — New Media Capabilities
+### 🔲 Phase 9 — New Media Capabilities (IN PROGRESS — paused before starting 9.1)
 
-#### 9.1 MP3 Audio Extraction (Context Menu)
+#### 🔲 9.1 MP3 Audio Extraction (Context Menu)
 
 **Approach:** Right-click video → "Extract Audio". Uses FFmpeg with `-vn` flag.
 

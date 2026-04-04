@@ -18,7 +18,11 @@ export function AppShell() {
     const unprobed = files.filter((f) => f.size === 0 && f.status === "queued");
     for (const file of unprobed) {
       probeFile(file.path)
-        .then((info) => updateFileProbe(file.id, { size: info.size }))
+        .then((info) => updateFileProbe(file.id, {
+          size: info.size,
+          resolution: info.resolution,
+          duration: info.duration,
+        }))
         .catch(() => {
           // Non-fatal — file is still compressible without size info
         });

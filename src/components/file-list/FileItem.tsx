@@ -51,6 +51,12 @@ export function FileItem({ file }: FileItemProps) {
           </div>
           <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
             {file.size > 0 && <span>{formatFileSize(file.size)}</span>}
+            {file.resolution && (
+              <span>{file.resolution.width}x{file.resolution.height}</span>
+            )}
+            {file.duration != null && file.duration > 0 && (
+              <span>{Math.floor(file.duration / 60)}:{String(Math.floor(file.duration % 60)).padStart(2, "0")}</span>
+            )}
             {file.result && file.result.success && (
               file.result.outputSize >= file.result.inputSize ? (
                 <span style={{ color: "var(--text-muted)" }}>Already optimized</span>

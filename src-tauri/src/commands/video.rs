@@ -33,6 +33,12 @@ pub async fn compress_video(
         .map(|m| m.len())
         .unwrap_or(0);
 
+    // Ensure the output directory exists (needed for subfolder export mode)
+    if let Some(parent) = std::path::Path::new(&output).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    }
+
     let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
 
     let args = build_video_args(&input, &output, &options);
