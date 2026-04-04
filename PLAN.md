@@ -158,8 +158,8 @@ compressions/
 | 7 — CI/CD & Packaging      | 🔲 Deferred | GitHub Actions release workflow, code signing               |
 | 8 — Bug Fixes & Quick Wins | ✅ Complete | AVIF input, dimensions in UI, subfolder/template output     |
 | 9 — New Media Capabilities | ✅ Complete | Audio extraction, video-to-GIF, GIF optimization, PDF (GS)  |
-| **10 — UX Enhancements**   | 🔲 Next     | Resume from **10.1**                                        |
-| 11 — Persistence           | 🔲 Planned  | History, log viewer                                         |
+| **10 — UX Enhancements**   | ✅ Complete | 10.1 Add files while compressing, 10.2 Clipboard paste     |
+| 11 — Persistence           | 🔨 In Progress | 11.1 History ✅, 11.2 Log viewer planned                   |
 | 12 — Final Polish          | 🔲 Planned  | Cross-cutting integration, keyboard shortcuts               |
 
 ---

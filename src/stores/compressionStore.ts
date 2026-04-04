@@ -126,7 +126,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   removeFile: (id) =>
     set((state) => ({ files: state.files.filter((f) => f.id !== id) })),
 
-  clearFiles: () => set({ files: [] }),
+  clearFiles: () => set({ files: [], isCompressing: false }),
 
   updateFileProbe: (id, info) =>
     set((state) => ({

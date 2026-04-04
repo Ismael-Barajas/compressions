@@ -101,6 +101,19 @@ export interface QueuedFile {
   error?: string;
 }
 
+export interface HistoryEntry {
+  id: string;
+  timestamp: string;
+  inputPath: string;
+  outputPath: string;
+  inputSize: number;
+  outputSize: number;
+  durationMs: number;
+  mediaType: string;
+  success: boolean;
+  error: string | null;
+}
+
 export type ProgressEvent =
   | { event: "started"; data: { jobId: string; fileName: string } }
   | { event: "progress"; data: ProgressPayload }

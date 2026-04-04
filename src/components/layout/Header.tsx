@@ -1,9 +1,11 @@
-import { Moon, Sun, Minimize2 } from "lucide-react";
+import { Moon, Sun, Minimize2, Clock } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
+import { useHistoryStore } from "../../stores/historyStore";
 
 export function Header() {
   const theme = useCompressionStore((s) => s.theme);
   const toggleTheme = useCompressionStore((s) => s.toggleTheme);
+  const openHistory = useHistoryStore((s) => s.open);
 
   return (
     <header
@@ -17,18 +19,28 @@ export function Header() {
           Compressions
         </h1>
       </div>
-      <button
-        onClick={toggleTheme}
-        className="rounded-md p-1.5 transition-colors hover:opacity-80"
-        style={{ backgroundColor: "var(--bg-tertiary)" }}
-        title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-      >
-        {theme === "light" ? (
-          <Moon size={16} style={{ color: "var(--text-secondary)" }} />
-        ) : (
-          <Sun size={16} style={{ color: "var(--text-secondary)" }} />
-        )}
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={openHistory}
+          className="rounded-md p-1.5 transition-colors hover:opacity-80"
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+          title="Compression history"
+        >
+          <Clock size={16} style={{ color: "var(--text-secondary)" }} />
+        </button>
+        <button
+          onClick={toggleTheme}
+          className="rounded-md p-1.5 transition-colors hover:opacity-80"
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+          title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+        >
+          {theme === "light" ? (
+            <Moon size={16} style={{ color: "var(--text-secondary)" }} />
+          ) : (
+            <Sun size={16} style={{ color: "var(--text-secondary)" }} />
+          )}
+        </button>
+      </div>
     </header>
   );
 }

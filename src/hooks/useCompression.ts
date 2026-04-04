@@ -20,19 +20,10 @@ export function useCompression() {
   const setIsCompressing = useCompressionStore((s) => s.setIsCompressing);
 
   const startCompression = useCallback(async () => {
-    const {
-      files,
-      videoOptions,
-      imageOptions,
-      pdfOptions,
-      outputDir,
-      outputMode,
-      subfolderName,
-      outputTemplate,
-    } = useCompressionStore.getState();
+    const { outputDir, outputMode } = useCompressionStore.getState();
 
-    const queued = files.filter((f) => f.status === "queued");
-    if (queued.length === 0) return;
+    const initialQueued = useCompressionStore.getState().files.filter((f) => f.status === "queued");
+    if (initialQueued.length === 0) return;
 
     if (outputMode === "customDir" && !outputDir) {
       console.error("No output directory selected");
@@ -42,182 +33,198 @@ export function useCompression() {
     setIsCompressing(true);
 
     try {
-      const videoFiles = queued.filter((f) => f.mediaType === "video");
-      const imageFiles = queued.filter((f) => f.mediaType === "image");
-      const pdfFiles = queued.filter((f) => f.mediaType === "pdf");
+      // Drain-loop: keep processing until no queued files remain.
+      // Files added by the user during compression are picked up in the next iteration.
+      while (true) {
+        const {
+          files,
+          videoOptions,
+          imageOptions,
+          pdfOptions,
+          outputDir: currentOutputDir,
+          outputMode: currentOutputMode,
+          subfolderName,
+          outputTemplate,
+        } = useCompressionStore.getState();
 
-      const getOutputDirForFile = (file: QueuedFile) => {
-        const parentDir = getParentDir(file.path);
-        const sep = parentDir.includes("\\") ? "\\" : "/";
-        switch (outputMode) {
-          case "subfolder":
-            return `${parentDir}${sep}${subfolderName}`;
-          case "customDir":
-            return outputDir!;
-          default:
-            return parentDir;
-        }
-      };
+        const queued = files.filter((f) => f.status === "queued");
+        if (queued.length === 0) break;
 
-      const promises: Promise<void>[] = [];
+        const getOutputDirForFile = (file: QueuedFile) => {
+          const parentDir = getParentDir(file.path);
+          const sep = parentDir.includes("\\") ? "\\" : "/";
+          switch (currentOutputMode) {
+            case "subfolder":
+              return `${parentDir}${sep}${subfolderName}`;
+            case "customDir":
+              return currentOutputDir!;
+            default:
+              return parentDir;
+          }
+        };
 
-      // --- Video batch (sequential, with progress channel) ---
-      if (videoFiles.length > 0) {
-        promises.push(
-          (async () => {
-            const videoBatch = videoFiles.map((f) => ({
-              input: f.path,
-              output: buildOutputPath(f.path, getOutputDirForFile(f), undefined, outputTemplate),
-            }));
+        const videoFiles = queued.filter((f) => f.mediaType === "video");
+        const imageFiles = queued.filter((f) => f.mediaType === "image");
+        const pdfFiles = queued.filter((f) => f.mediaType === "pdf");
 
-            const videoFileIds = videoFiles.map((f) => f.id);
-            let videoIndex = 0;
+        const promises: Promise<void>[] = [];
 
-            const channel = new Channel<ProgressEvent>();
-            channel.onmessage = (event: ProgressEvent) => {
-              switch (event.event) {
-                case "started": {
-                  const fileId = videoFileIds[videoIndex];
-                  if (fileId) {
-                    setFileStatus(fileId, "processing", event.data.jobId);
+        // --- Video batch (sequential, with progress channel) ---
+        if (videoFiles.length > 0) {
+          promises.push(
+            (async () => {
+              const videoBatch = videoFiles.map((f) => ({
+                input: f.path,
+                output: buildOutputPath(f.path, getOutputDirForFile(f), undefined, outputTemplate),
+              }));
+
+              const videoFileIds = videoFiles.map((f) => f.id);
+              let videoIndex = 0;
+
+              const channel = new Channel<ProgressEvent>();
+              channel.onmessage = (event: ProgressEvent) => {
+                switch (event.event) {
+                  case "started": {
+                    const fileId = videoFileIds[videoIndex];
+                    if (fileId) {
+                      setFileStatus(fileId, "processing", event.data.jobId);
+                    }
+                    videoIndex++;
+                    break;
                   }
-                  videoIndex++;
-                  break;
+                  case "progress":
+                    updateProgress(event.data.jobId, event.data);
+                    break;
+                  case "completed":
+                    markComplete(event.data.jobId, event.data);
+                    break;
+                  case "error":
+                    markError(event.data.jobId, event.data.message);
+                    break;
                 }
-                case "progress":
-                  updateProgress(event.data.jobId, event.data);
-                  break;
-                case "completed":
-                  markComplete(event.data.jobId, event.data);
-                  break;
-                case "error":
-                  markError(event.data.jobId, event.data.message);
-                  break;
-              }
-            };
+              };
 
-            try {
-              await compressVideosBatch(videoBatch, videoOptions, channel);
-            } catch (err) {
-              // Mark remaining unstarted video files as error
-              for (let i = videoIndex; i < videoFileIds.length; i++) {
-                const fid = videoFileIds[i];
-                useCompressionStore.setState((state) => ({
-                  files: state.files.map((f) =>
-                    f.id === fid
-                      ? { ...f, status: "error" as const, error: String(err) }
-                      : f,
-                  ),
-                }));
-              }
-            }
-          })(),
-        );
-      }
-
-      // --- Image batch (parallel, with progress channel) ---
-      if (imageFiles.length > 0) {
-        promises.push(
-          (async () => {
-            const imageFormat = imageOptions.format.toLowerCase();
-            const imageBatch = imageFiles.map((f) => ({
-              input: f.path,
-              output: buildOutputPath(f.path, getOutputDirForFile(f), imageFormat, outputTemplate),
-            }));
-
-            const channel = new Channel<ProgressEvent>();
-            channel.onmessage = (event: ProgressEvent) => {
-              switch (event.event) {
-                case "started": {
-                  // Match the started event to a file by filename
-                  const matchedFile = imageFiles.find((f) => f.name === event.data.fileName);
-                  if (matchedFile) {
-                    setFileStatus(matchedFile.id, "processing", event.data.jobId);
-                  }
-                  break;
-                }
-                case "completed":
-                  markComplete(event.data.jobId, event.data);
-                  break;
-                case "error":
-                  markError(event.data.jobId, event.data.message);
-                  break;
-              }
-            };
-
-            try {
-              await compressImagesBatch(imageBatch, imageOptions, channel);
-            } catch (err) {
-              for (const f of imageFiles) {
-                const current = useCompressionStore
-                  .getState()
-                  .files.find((sf) => sf.id === f.id);
-                if (current && current.status === "processing") {
+              try {
+                await compressVideosBatch(videoBatch, videoOptions, channel);
+              } catch (err) {
+                for (let i = videoIndex; i < videoFileIds.length; i++) {
+                  const fid = videoFileIds[i];
                   useCompressionStore.setState((state) => ({
-                    files: state.files.map((sf) =>
-                      sf.id === f.id
-                        ? { ...sf, status: "error" as const, error: String(err) }
-                        : sf,
+                    files: state.files.map((f) =>
+                      f.id === fid
+                        ? { ...f, status: "error" as const, error: String(err) }
+                        : f,
                     ),
                   }));
                 }
               }
-            }
-          })(),
-        );
-      }
+            })(),
+          );
+        }
 
-      // --- PDF batch (sequential, indeterminate progress) ---
-      if (pdfFiles.length > 0) {
-        promises.push(
-          (async () => {
-            const pdfBatch = pdfFiles.map((f) => ({
-              input: f.path,
-              output: buildOutputPath(f.path, getOutputDirForFile(f), "pdf", outputTemplate),
-            }));
+        // --- Image batch (parallel, with progress channel) ---
+        if (imageFiles.length > 0) {
+          promises.push(
+            (async () => {
+              const imageFormat = imageOptions.format.toLowerCase();
+              const imageBatch = imageFiles.map((f) => ({
+                input: f.path,
+                output: buildOutputPath(f.path, getOutputDirForFile(f), imageFormat, outputTemplate),
+              }));
 
-            const pdfFileIds = pdfFiles.map((f) => f.id);
-            let pdfIndex = 0;
-
-            const channel = new Channel<ProgressEvent>();
-            channel.onmessage = (event: ProgressEvent) => {
-              switch (event.event) {
-                case "started": {
-                  const fileId = pdfFileIds[pdfIndex];
-                  if (fileId) {
-                    setFileStatus(fileId, "processing", event.data.jobId);
+              const channel = new Channel<ProgressEvent>();
+              channel.onmessage = (event: ProgressEvent) => {
+                switch (event.event) {
+                  case "started": {
+                    const matchedFile = imageFiles.find((f) => f.name === event.data.fileName);
+                    if (matchedFile) {
+                      setFileStatus(matchedFile.id, "processing", event.data.jobId);
+                    }
+                    break;
                   }
-                  pdfIndex++;
-                  break;
+                  case "completed":
+                    markComplete(event.data.jobId, event.data);
+                    break;
+                  case "error":
+                    markError(event.data.jobId, event.data.message);
+                    break;
                 }
-                case "completed":
-                  markComplete(event.data.jobId, event.data);
-                  break;
-                case "error":
-                  markError(event.data.jobId, event.data.message);
-                  break;
-              }
-            };
+              };
 
-            try {
-              await compressPdfsBatch(pdfBatch, pdfOptions, channel);
-            } catch (err) {
-              for (let i = pdfIndex; i < pdfFileIds.length; i++) {
-                const fid = pdfFileIds[i];
-                useCompressionStore.setState((state) => ({
-                  files: state.files.map((f) =>
-                    f.id === fid
-                      ? { ...f, status: "error" as const, error: String(err) }
-                      : f,
-                  ),
-                }));
+              try {
+                await compressImagesBatch(imageBatch, imageOptions, channel);
+              } catch (err) {
+                for (const f of imageFiles) {
+                  const current = useCompressionStore
+                    .getState()
+                    .files.find((sf) => sf.id === f.id);
+                  if (current && current.status === "processing") {
+                    useCompressionStore.setState((state) => ({
+                      files: state.files.map((sf) =>
+                        sf.id === f.id
+                          ? { ...sf, status: "error" as const, error: String(err) }
+                          : sf,
+                      ),
+                    }));
+                  }
+                }
               }
-            }
-          })(),
-        );
+            })(),
+          );
+        }
+
+        // --- PDF batch (sequential, indeterminate progress) ---
+        if (pdfFiles.length > 0) {
+          promises.push(
+            (async () => {
+              const pdfBatch = pdfFiles.map((f) => ({
+                input: f.path,
+                output: buildOutputPath(f.path, getOutputDirForFile(f), "pdf", outputTemplate),
+              }));
+
+              const pdfFileIds = pdfFiles.map((f) => f.id);
+              let pdfIndex = 0;
+
+              const channel = new Channel<ProgressEvent>();
+              channel.onmessage = (event: ProgressEvent) => {
+                switch (event.event) {
+                  case "started": {
+                    const fileId = pdfFileIds[pdfIndex];
+                    if (fileId) {
+                      setFileStatus(fileId, "processing", event.data.jobId);
+                    }
+                    pdfIndex++;
+                    break;
+                  }
+                  case "completed":
+                    markComplete(event.data.jobId, event.data);
+                    break;
+                  case "error":
+                    markError(event.data.jobId, event.data.message);
+                    break;
+                }
+              };
+
+              try {
+                await compressPdfsBatch(pdfBatch, pdfOptions, channel);
+              } catch (err) {
+                for (let i = pdfIndex; i < pdfFileIds.length; i++) {
+                  const fid = pdfFileIds[i];
+                  useCompressionStore.setState((state) => ({
+                    files: state.files.map((f) =>
+                      f.id === fid
+                        ? { ...f, status: "error" as const, error: String(err) }
+                        : f,
+                    ),
+                  }));
+                }
+              }
+            })(),
+          );
+        }
+
+        await Promise.allSettled(promises);
       }
-
-      await Promise.allSettled(promises);
     } finally {
       setIsCompressing(false);
     }

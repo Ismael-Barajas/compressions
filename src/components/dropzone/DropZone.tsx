@@ -1,101 +1,39 @@
-import { useState, useCallback, useEffect } from "react";
 import { Upload, FolderOpen } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { getMediaType, getFileName } from "../../lib/fileUtils";
 import { scanPaths } from "../../lib/commands";
 import type { QueuedFile } from "../../types/compression";
 
-export function DropZone() {
-  const [isDragOver, setIsDragOver] = useState(false);
-  const addFiles = useCompressionStore((s) => s.addFiles);
-
-  const processFilePaths = useCallback(
-    async (paths: string[]) => {
-      try {
-        const resolvedPaths = await scanPaths(paths);
-        const validFiles: QueuedFile[] = [];
-        for (const path of resolvedPaths) {
-          const mediaType = getMediaType(path);
-          if (mediaType) {
-            validFiles.push({
-              id: crypto.randomUUID(),
-              path,
-              name: getFileName(path),
-              size: 0, // will be populated by probeFile
-              mediaType,
-              status: "queued",
-              progress: 0,
-            });
-          }
-        }
-        if (validFiles.length > 0) {
-          addFiles(validFiles);
-        }
-      } catch {
-        // Fallback: process paths locally if scan_paths unavailable
-        const validFiles: QueuedFile[] = [];
-        for (const path of paths) {
-          const mediaType = getMediaType(path);
-          if (mediaType) {
-            validFiles.push({
-              id: crypto.randomUUID(),
-              path,
-              name: getFileName(path),
-              size: 0,
-              mediaType,
-              status: "queued",
-              progress: 0,
-            });
-          }
-        }
-        if (validFiles.length > 0) {
-          addFiles(validFiles);
-        }
-      }
-    },
-    [addFiles],
-  );
-
-  useEffect(() => {
-    let lastDropTime = 0;
-
-    async function setupDragDrop() {
-      try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-          if (event.payload.type === "over") {
-            setIsDragOver(true);
-          } else if (event.payload.type === "leave") {
-            setIsDragOver(false);
-          } else if (event.payload.type === "drop") {
-            const now = Date.now();
-            // Deduplicate Tauri double-fire bug
-            if (now - lastDropTime < 100) return;
-            lastDropTime = now;
-
-            setIsDragOver(false);
-            processFilePaths(event.payload.paths);
-          }
-        });
-        return unlisten;
-      } catch {
-        // Not running in Tauri (e.g., dev in browser)
-        return undefined;
-      }
+async function addResolvedPaths(paths: string[]) {
+  const resolvedPaths = await scanPaths(paths);
+  const validFiles: QueuedFile[] = [];
+  for (const path of resolvedPaths) {
+    const mediaType = getMediaType(path);
+    if (mediaType) {
+      validFiles.push({
+        id: crypto.randomUUID(),
+        path,
+        name: getFileName(path),
+        size: 0,
+        mediaType,
+        status: "queued",
+        progress: 0,
+      });
     }
+  }
+  if (validFiles.length > 0) {
+    useCompressionStore.getState().addFiles(validFiles);
+  }
+}
 
-    const cleanup = setupDragDrop();
-    return () => {
-      cleanup.then((fn) => fn?.());
-    };
-  }, [processFilePaths]);
+export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
 
   const handleBrowseFolder = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true });
       if (selected) {
-        processFilePaths([selected as string]);
+        addResolvedPaths([selected as string]);
       }
     } catch {
       // Dialog cancelled or not in Tauri
@@ -132,7 +70,7 @@ export function DropZone() {
       });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        processFilePaths(paths);
+        addResolvedPaths(paths);
       }
     } catch {
       // Dialog cancelled or not in Tauri

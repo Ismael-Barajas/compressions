@@ -179,6 +179,38 @@ pub struct BatchEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub input_path: String,
+    pub output_path: String,
+    pub input_size: u64,
+    pub output_size: u64,
+    pub duration_ms: u64,
+    pub media_type: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+impl HistoryEntry {
+    pub fn from_result(result: &CompressionResult, media_type: &str) -> Self {
+        Self {
+            id: result.job_id.clone(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            input_path: result.input_path.clone(),
+            output_path: result.output_path.clone(),
+            input_size: result.input_size,
+            output_size: result.output_size,
+            duration_ms: result.duration_ms,
+            media_type: media_type.to_string(),
+            success: result.success,
+            error: result.error.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Preset {
     pub id: String,
     pub name: String,

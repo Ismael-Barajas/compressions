@@ -1,6 +1,7 @@
 mod commands;
 mod compression;
 mod ffmpeg;
+mod history;
 mod presets;
 mod state;
 mod types;
@@ -34,6 +35,10 @@ pub fn run() {
             commands::gif::convert_videos_to_gif_batch,
             commands::pdf::compress_pdf,
             commands::pdf::compress_pdfs_batch,
+            commands::clipboard::read_clipboard_files,
+            commands::clipboard::save_clipboard_image,
+            commands::history::get_history,
+            commands::history::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

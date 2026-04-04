@@ -9,9 +9,10 @@ use uuid::Uuid;
 use crate::compression::progress::parse_progress_line;
 use crate::ffmpeg::args::build_audio_extraction_args;
 use crate::ffmpeg::probe::probe_video_duration;
+use crate::history::storage as history;
 use crate::state::AppState;
 use crate::types::{
-    AudioExtractionOptions, BatchEntry, CompressionResult, ProgressEvent,
+    AudioExtractionOptions, BatchEntry, CompressionResult, HistoryEntry, ProgressEvent,
     ProgressPayload,
 };
 
@@ -121,6 +122,7 @@ pub async fn extract_audio(
                     });
                 }
 
+                let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "audio"));
                 return Ok(result);
             }
             _ => {}

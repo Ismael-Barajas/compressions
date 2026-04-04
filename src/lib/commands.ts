@@ -9,6 +9,7 @@ import type {
   FileInfo,
   MediaType,
   ProgressEvent,
+  HistoryEntry,
 } from "../types/compression";
 import type { Preset } from "../types/presets";
 
@@ -132,4 +133,20 @@ export async function compressPdfsBatch(
   onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult[]> {
   return invoke("compress_pdfs_batch", { files, options, onProgress });
+}
+
+export async function readClipboardFiles(): Promise<string[]> {
+  return invoke("read_clipboard_files");
+}
+
+export async function saveClipboardImage(): Promise<string> {
+  return invoke("save_clipboard_image");
+}
+
+export async function getHistory(): Promise<HistoryEntry[]> {
+  return invoke("get_history");
+}
+
+export async function clearHistory(): Promise<void> {
+  return invoke("clear_history");
 }

@@ -6,8 +6,9 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
+use crate::history::storage as history;
 use crate::types::{
-    BatchEntry, CompressionResult, PdfOptions, PdfQuality, ProgressEvent,
+    BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
 };
 
 /// Resolve the path to the bundled Ghostscript resource directory.
@@ -162,6 +163,7 @@ pub async fn compress_pdf(
                     });
                 }
 
+                let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "pdf"));
                 return Ok(result);
             }
             _ => {}

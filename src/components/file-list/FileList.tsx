@@ -81,7 +81,6 @@ export function FileList() {
           <button
             className="btn-secondary flex items-center gap-1.5 text-xs"
             onClick={handleAddMore}
-            disabled={isCompressing}
           >
             <Plus size={14} />
             Add More
@@ -89,7 +88,6 @@ export function FileList() {
           <button
             className="btn-secondary flex items-center gap-1.5 text-xs"
             onClick={handleAddFolder}
-            disabled={isCompressing}
           >
             <FolderOpen size={14} />
             Add Folder
@@ -97,7 +95,6 @@ export function FileList() {
           <button
             className="btn-secondary flex items-center gap-1.5 text-xs"
             onClick={clearFiles}
-            disabled={isCompressing}
             style={{ color: "var(--error)" }}
           >
             <Trash2 size={14} />

@@ -7,7 +7,8 @@ use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
 use crate::compression::image as img_compress;
-use crate::types::{BatchEntry, CompressionResult, ImageFormat, ImageOptions, ProgressEvent};
+use crate::history::storage as history;
+use crate::types::{BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent};
 
 fn is_avif_input(path: &str) -> bool {
     Path::new(path)
@@ -141,6 +142,7 @@ pub async fn compress_image(
             };
 
             let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
+            let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "image"));
             Ok(result)
         }
         Err(e) => {
@@ -148,7 +150,7 @@ pub async fn compress_image(
                 job_id: job_id.clone(),
                 message: e.clone(),
             });
-            Ok(CompressionResult {
+            let err_result = CompressionResult {
                 job_id,
                 input_path: input,
                 output_path: output,
@@ -157,7 +159,9 @@ pub async fn compress_image(
                 duration_ms,
                 success: false,
                 error: Some(e),
-            })
+            };
+            let _ = history::append_entry(&app, HistoryEntry::from_result(&err_result, "image"));
+            Ok(err_result)
         }
     }
 }

@@ -9,9 +9,10 @@ use uuid::Uuid;
 use crate::compression::progress::parse_progress_line;
 use crate::ffmpeg::args::build_video_args;
 use crate::ffmpeg::probe::probe_video_duration;
+use crate::history::storage as history;
 use crate::state::AppState;
 use crate::types::{
-    BatchEntry, CompressionResult, ProgressEvent, ProgressPayload, VideoOptions,
+    BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload, VideoOptions,
 };
 
 #[tauri::command]
@@ -123,6 +124,7 @@ pub async fn compress_video(
                     });
                 }
 
+                let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "video"));
                 return Ok(result);
             }
             _ => {}

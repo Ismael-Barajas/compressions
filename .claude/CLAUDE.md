@@ -8,7 +8,7 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-Phase 9 (new media capabilities) is complete. Phase 10+ (UX enhancements) is next — resume from **Phase 10.1: Add Files While Compressing**.
+Phase 11.1 (Compression History) is complete. Resume from **Phase 11.2: Log Viewer**.
 
 ## Stack
 
@@ -54,3 +54,12 @@ npm run tauri build
 ```
 
 Prerequisites: Node 18+, Rust (rustup), NASM (`choco install nasm` / `brew install nasm`)
+
+## Phase Completion Checklist
+
+After completing every phase sub-task (e.g. 10.1, 10.2, 11.1):
+
+1. **Verify TypeScript:** run `npx tsc --noEmit` — must pass with zero errors
+2. **Verify Rust:** run `cargo check --manifest-path src-tauri/Cargo.toml` — must pass with zero errors
+3. **Update CLAUDE.md:** change `Current Status` to reflect what just completed and what is next
+4. **Update PLAN.md:** mark the completed phase row as ✅ Complete in the Implementation Status table
