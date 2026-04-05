@@ -25,7 +25,8 @@
       "Bash(grep -A 10 \"compress_images_batch\\\\|compress_videos_batch\" /Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/src/commands/*.rs)",
       "Bash(/Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/binaries/ffmpeg-aarch64-apple-darwin -encoders)",
       "Bash(./src-tauri/binaries/ffmpeg-aarch64-apple-darwin -encoders)",
-      "Bash(cargo doc:*)"
+      "Bash(cargo doc:*)",
+      "Bash(cargo bench:*)"
     ]
   }
 }

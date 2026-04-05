@@ -1,9 +1,11 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::compression::image as img_compress;
@@ -226,13 +228,19 @@ pub async fn compress_images_batch(
     options: ImageOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
+    let max_concurrent = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let mut handles = Vec::new();
 
     for entry in files {
         let opts = options.clone();
         let app_clone = app.clone();
         let channel_clone = on_progress.clone();
+        let sem = semaphore.clone();
         let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
             compress_image(app_clone, entry.input, entry.output, opts, channel_clone).await
         });
         handles.push(handle);

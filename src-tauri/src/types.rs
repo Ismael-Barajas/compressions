@@ -105,6 +105,9 @@ pub struct VideoOptions {
     pub framerate: Option<f32>,
     pub audio_codec: AudioCodec,
     pub audio_bitrate: Option<String>,
+    /// Set by backend when a HW encoder is available. Frontend never sends this.
+    #[serde(default)]
+    pub hw_encoder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,6 +9,7 @@ pub mod types;
 
 use state::AppState;
 use std::sync::Mutex;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,6 +28,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(Mutex::new(AppState::default()))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let encoders = ffmpeg::probe::detect_hw_encoders(&handle).await;
+                if let Some(state) = handle.try_state::<Mutex<AppState>>() {
+                    if let Ok(mut s) = state.lock() {
+                        s.hw_encoders = encoders;
+                    }
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::video::compress_video,
             commands::video::compress_videos_batch,

@@ -158,7 +158,8 @@ fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), Stri
 
     let res = ravif::Encoder::new()
         .with_quality(quality as f32)
-        .with_speed(6)
+        .with_speed(7)
+        .with_num_threads(Some(4))
         .encode_rgba(img_ref)
         .map_err(|e| format!("Failed to encode AVIF: {}", e))?;
 

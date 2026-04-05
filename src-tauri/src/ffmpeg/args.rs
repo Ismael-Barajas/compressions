@@ -15,14 +15,30 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         "0.1".into(),
     ];
 
-    // Video codec
-    let codec_str = match opts.codec {
-        VideoCodec::H264 => "libx264",
-        VideoCodec::H265 => "libx265",
-        VideoCodec::AV1 => "libsvtav1",
+    // Video codec — use HW encoder if backend resolved one, else software
+    let is_hw = opts.hw_encoder.is_some();
+    let codec_str = match &opts.hw_encoder {
+        Some(hw) => hw.clone(),
+        None => match opts.codec {
+            VideoCodec::H264 => "libx264".into(),
+            VideoCodec::H265 => "libx265".into(),
+            VideoCodec::AV1 => "libsvtav1".into(),
+        },
     };
     args.push("-c:v".into());
-    args.push(codec_str.into());
+    args.push(codec_str);
+
+    if !is_hw {
+        // Encoder preset — "fast" for x264/x265, "7" for SVT-AV1
+        args.push("-preset".into());
+        args.push(
+            match opts.codec {
+                VideoCodec::H264 | VideoCodec::H265 => "fast",
+                VideoCodec::AV1 => "7",
+            }
+            .into(),
+        );
+    }
 
     // AV1 requires yuv420p pixel format
     if matches!(opts.codec, VideoCodec::AV1) {
@@ -30,9 +46,15 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         args.push("yuv420p".into());
     }
 
-    // Quality (CRF)
-    args.push("-crf".into());
-    args.push(opts.crf.to_string());
+    // Quality — HW encoders use -q:v (0-100), software uses CRF
+    if is_hw {
+        let q = ((51u16.saturating_sub(opts.crf.min(51) as u16)) * 100 / 51) as u8;
+        args.push("-q:v".into());
+        args.push(q.to_string());
+    } else {
+        args.push("-crf".into());
+        args.push(opts.crf.to_string());
+    }
 
     // Resolution — downscale only, maintain aspect ratio, ensure even dimensions
     if let Some(ref res) = opts.resolution {
@@ -225,6 +247,7 @@ mod tests {
             framerate: None,
             audio_codec: AudioCodec::AAC,
             audio_bitrate: Some("128k".into()),
+            hw_encoder: None,
         }
     }
 
@@ -232,6 +255,8 @@ mod tests {
     fn h264_basic_args() {
         let args = build_video_args("in.mp4", "out.mp4", &default_video_opts());
         assert!(args.contains(&"libx264".to_string()));
+        assert!(args.contains(&"-preset".to_string()));
+        assert!(args.contains(&"fast".to_string()));
         assert!(args.contains(&"-crf".to_string()));
         assert!(args.contains(&"23".to_string()));
         assert!(args.contains(&"+faststart".to_string()));
@@ -244,6 +269,7 @@ mod tests {
         opts.codec = VideoCodec::H265;
         let args = build_video_args("in.mp4", "out.mp4", &opts);
         assert!(args.contains(&"libx265".to_string()));
+        assert!(args.contains(&"fast".to_string()));
     }
 
     #[test]
@@ -252,6 +278,7 @@ mod tests {
         opts.codec = VideoCodec::AV1;
         let args = build_video_args("in.mp4", "out.mp4", &opts);
         assert!(args.contains(&"libsvtav1".to_string()));
+        assert!(args.contains(&"7".to_string()));
         assert!(args.contains(&"-pix_fmt".to_string()));
         assert!(args.contains(&"yuv420p".to_string()));
     }
@@ -363,5 +390,27 @@ mod tests {
         let args = build_gif_encode_args("in.mp4", "palette.png", "out.gif", &opts);
         let lavfi = args.iter().find(|a| a.contains("paletteuse")).unwrap();
         assert!(lavfi.contains("dither=none"));
+    }
+
+    #[test]
+    fn hw_encoder_uses_qv_instead_of_crf() {
+        let mut opts = default_video_opts();
+        opts.hw_encoder = Some("h264_videotoolbox".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"h264_videotoolbox".to_string()));
+        assert!(args.contains(&"-q:v".to_string()));
+        assert!(!args.contains(&"-crf".to_string()));
+        assert!(!args.contains(&"-preset".to_string()));
+    }
+
+    #[test]
+    fn hw_encoder_quality_mapping() {
+        let mut opts = default_video_opts();
+        opts.crf = 23;
+        opts.hw_encoder = Some("hevc_videotoolbox".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        // CRF 23 → q = (51-23)*100/51 = 54
+        let qv_idx = args.iter().position(|a| a == "-q:v").unwrap();
+        assert_eq!(args[qv_idx + 1], "54");
     }
 }
