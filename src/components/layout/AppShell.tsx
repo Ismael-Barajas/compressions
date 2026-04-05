@@ -14,6 +14,7 @@ import { PdfControls } from "../controls/PdfControls";
 import { OutputSettings } from "../output/OutputSettings";
 import { ResultsSummary } from "../output/ResultsSummary";
 import { HistoryPanel } from "../history/HistoryPanel";
+import { LogViewer } from "../logs/LogViewer";
 import type { QueuedFile } from "../../types/compression";
 
 export function AppShell() {
@@ -128,6 +129,7 @@ export function AppShell() {
   return (
     <>
     <HistoryPanel />
+    <LogViewer />
     <div className="flex flex-1 overflow-hidden">
       {/* Left panel: files */}
       <div className="flex flex-1 flex-col overflow-hidden p-4">

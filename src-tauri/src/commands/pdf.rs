@@ -89,6 +89,7 @@ pub async fn compress_pdf(
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     let job_id = Uuid::new_v4().to_string();
+    tracing::info!(input = %input, quality = ?options.quality, "Starting PDF compression");
     let file_name = std::path::Path::new(&input)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -163,6 +164,11 @@ pub async fn compress_pdf(
                     });
                 }
 
+                if result.success {
+                    tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "PDF compression completed");
+                } else {
+                    tracing::warn!(input = %result.input_path, error = ?result.error, "PDF compression failed");
+                }
                 let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "pdf"));
                 return Ok(result);
             }
@@ -171,6 +177,67 @@ pub async fn compress_pdf(
     }
 
     Err("Ghostscript process ended unexpectedly".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(quality: PdfQuality, dpi: Option<u32>) -> PdfOptions {
+        PdfOptions { quality, dpi }
+    }
+
+    #[test]
+    fn gs_args_ebook_preset() {
+        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, None), None);
+        assert!(args.contains(&"-dPDFSETTINGS=/ebook".to_string()));
+        assert!(args.contains(&"-sDEVICE=pdfwrite".to_string()));
+        assert!(args.contains(&"-dNOPAUSE".to_string()));
+        assert!(args.contains(&"-dBATCH".to_string()));
+        assert!(args.contains(&"-dQUIET".to_string()));
+        assert!(args.iter().any(|a| a.contains("sOutputFile")));
+    }
+
+    #[test]
+    fn gs_args_all_presets() {
+        for (q, name) in [
+            (PdfQuality::Screen, "screen"),
+            (PdfQuality::Ebook, "ebook"),
+            (PdfQuality::Printer, "printer"),
+            (PdfQuality::Prepress, "prepress"),
+        ] {
+            let args = build_gs_args("in.pdf", "out.pdf", &opts(q, None), None);
+            assert!(args.contains(&format!("-dPDFSETTINGS=/{}", name)));
+        }
+    }
+
+    #[test]
+    fn gs_args_with_dpi() {
+        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, Some(150)), None);
+        assert!(args.contains(&"-dColorImageResolution=150".to_string()));
+        assert!(args.contains(&"-dGrayImageResolution=150".to_string()));
+        assert!(args.contains(&"-dMonoImageResolution=150".to_string()));
+    }
+
+    #[test]
+    fn gs_args_without_dpi() {
+        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Screen, None), None);
+        assert!(!args.iter().any(|a| a.contains("ImageResolution")));
+    }
+
+    #[test]
+    fn gs_args_with_resource_dir() {
+        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, None), Some("/res"));
+        assert!(args.contains(&"-I/res/Resource/Init".to_string()));
+        assert!(args.contains(&"-I/res/lib".to_string()));
+        assert!(args.contains(&"-I/res/Resource".to_string()));
+    }
+
+    #[test]
+    fn gs_args_without_resource_dir() {
+        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, None), None);
+        assert!(!args.iter().any(|a| a.starts_with("-I")));
+    }
 }
 
 #[tauri::command]

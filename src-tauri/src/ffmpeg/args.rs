@@ -205,3 +205,154 @@ pub fn build_gif_encode_args(
         output.into(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_video_opts() -> VideoOptions {
+        VideoOptions {
+            codec: VideoCodec::H264,
+            crf: 23,
+            resolution: None,
+            bitrate: None,
+            framerate: None,
+            audio_codec: AudioCodec::AAC,
+            audio_bitrate: Some("128k".into()),
+        }
+    }
+
+    #[test]
+    fn h264_basic_args() {
+        let args = build_video_args("in.mp4", "out.mp4", &default_video_opts());
+        assert!(args.contains(&"libx264".to_string()));
+        assert!(args.contains(&"-crf".to_string()));
+        assert!(args.contains(&"23".to_string()));
+        assert!(args.contains(&"+faststart".to_string()));
+        assert!(!args.contains(&"-pix_fmt".to_string()));
+    }
+
+    #[test]
+    fn h265_codec() {
+        let mut opts = default_video_opts();
+        opts.codec = VideoCodec::H265;
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"libx265".to_string()));
+    }
+
+    #[test]
+    fn av1_has_pix_fmt() {
+        let mut opts = default_video_opts();
+        opts.codec = VideoCodec::AV1;
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"libsvtav1".to_string()));
+        assert!(args.contains(&"-pix_fmt".to_string()));
+        assert!(args.contains(&"yuv420p".to_string()));
+    }
+
+    #[test]
+    fn resolution_filter() {
+        let mut opts = default_video_opts();
+        opts.resolution = Some(crate::types::Resolution { width: 1280, height: 720 });
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"-vf".to_string()));
+        let vf = args.iter().find(|a| a.contains("scale=")).unwrap();
+        assert!(vf.contains("1280"));
+        assert!(vf.contains("720"));
+    }
+
+    #[test]
+    fn audio_none_strips_audio() {
+        let mut opts = default_video_opts();
+        opts.audio_codec = AudioCodec::None;
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"-an".to_string()));
+    }
+
+    #[test]
+    fn audio_copy() {
+        let mut opts = default_video_opts();
+        opts.audio_codec = AudioCodec::Copy;
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"copy".to_string()));
+    }
+
+    #[test]
+    fn bitrate_and_fps() {
+        let mut opts = default_video_opts();
+        opts.bitrate = Some("2M".into());
+        opts.framerate = Some(30.0);
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"-b:v".to_string()));
+        assert!(args.contains(&"2M".to_string()));
+        assert!(args.contains(&"-r".to_string()));
+        assert!(args.contains(&"30".to_string()));
+    }
+
+    #[test]
+    fn no_faststart_for_mkv() {
+        let args = build_video_args("in.mkv", "out.mkv", &default_video_opts());
+        assert!(!args.contains(&"+faststart".to_string()));
+    }
+
+    #[test]
+    fn audio_extraction_mp3() {
+        let opts = AudioExtractionOptions {
+            format: AudioOutputFormat::Mp3,
+            bitrate: Some("192k".into()),
+            sample_rate: None,
+        };
+        let args = build_audio_extraction_args("in.mp4", "out.mp3", &opts);
+        assert!(args.contains(&"libmp3lame".to_string()));
+        assert!(args.contains(&"-vn".to_string()));
+        assert!(args.contains(&"-b:a".to_string()));
+        assert!(args.contains(&"192k".to_string()));
+    }
+
+    #[test]
+    fn audio_extraction_flac_no_bitrate() {
+        let opts = AudioExtractionOptions {
+            format: AudioOutputFormat::Flac,
+            bitrate: Some("192k".into()),
+            sample_rate: Some(44100),
+        };
+        let args = build_audio_extraction_args("in.mp4", "out.flac", &opts);
+        assert!(args.contains(&"flac".to_string()));
+        assert!(!args.contains(&"-b:a".to_string()));
+        assert!(args.contains(&"-ar".to_string()));
+        assert!(args.contains(&"44100".to_string()));
+    }
+
+    #[test]
+    fn gif_palette_args() {
+        let opts = GifConversionOptions {
+            fps: 15,
+            width: Some(320),
+            max_colors: 256,
+            dither: DitherMode::Bayer,
+        };
+        let args = build_gif_palette_args("in.mp4", "palette.png", &opts);
+        let vf = args.iter().find(|a| a.contains("fps=")).unwrap();
+        assert!(vf.contains("fps=15"));
+        assert!(vf.contains("scale=320"));
+        assert!(vf.contains("palettegen"));
+    }
+
+    #[test]
+    fn gif_encode_dither_modes() {
+        let mut opts = GifConversionOptions {
+            fps: 10,
+            width: None,
+            max_colors: 128,
+            dither: DitherMode::FloydSteinberg,
+        };
+        let args = build_gif_encode_args("in.mp4", "palette.png", "out.gif", &opts);
+        let lavfi = args.iter().find(|a| a.contains("paletteuse")).unwrap();
+        assert!(lavfi.contains("dither=floyd_steinberg"));
+
+        opts.dither = DitherMode::None;
+        let args = build_gif_encode_args("in.mp4", "palette.png", "out.gif", &opts);
+        let lavfi = args.iter().find(|a| a.contains("paletteuse")).unwrap();
+        assert!(lavfi.contains("dither=none"));
+    }
+}

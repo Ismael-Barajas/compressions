@@ -104,3 +104,46 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_video_types() {
+        for ext in &["mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts"] {
+            let result = detect_media_type(format!("file.{}", ext));
+            assert!(matches!(result, Ok(MediaType::Video)), "failed for .{}", ext);
+        }
+    }
+
+    #[test]
+    fn detect_image_types() {
+        for ext in &["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif"] {
+            let result = detect_media_type(format!("file.{}", ext));
+            assert!(matches!(result, Ok(MediaType::Image)), "failed for .{}", ext);
+        }
+    }
+
+    #[test]
+    fn detect_pdf() {
+        assert!(matches!(detect_media_type("doc.pdf".into()), Ok(MediaType::Pdf)));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        assert!(matches!(detect_media_type("file.MP4".into()), Ok(MediaType::Video)));
+        assert!(matches!(detect_media_type("file.Png".into()), Ok(MediaType::Image)));
+        assert!(matches!(detect_media_type("file.PDF".into()), Ok(MediaType::Pdf)));
+    }
+
+    #[test]
+    fn unknown_extension() {
+        assert!(detect_media_type("file.xyz".into()).is_err());
+    }
+
+    #[test]
+    fn no_extension() {
+        assert!(detect_media_type("noext".into()).is_err());
+    }
+}

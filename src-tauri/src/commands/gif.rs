@@ -26,6 +26,7 @@ pub async fn convert_video_to_gif(
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     let job_id = Uuid::new_v4().to_string();
+    tracing::info!(input = %input, output = %output, "Starting GIF conversion");
     let file_name = std::path::Path::new(&input)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -157,6 +158,11 @@ pub async fn convert_video_to_gif(
                     });
                 }
 
+                if result.success {
+                    tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "GIF conversion completed");
+                } else {
+                    tracing::warn!(input = %result.input_path, error = ?result.error, "GIF conversion failed");
+                }
                 let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "gif"));
                 return Ok(result);
             }

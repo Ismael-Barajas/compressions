@@ -1,11 +1,13 @@
-import { Moon, Sun, Minimize2, Clock } from "lucide-react";
+import { Moon, Sun, Minimize2, Clock, Terminal } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useHistoryStore } from "../../stores/historyStore";
+import { useLogStore } from "../../stores/logStore";
 
 export function Header() {
   const theme = useCompressionStore((s) => s.theme);
   const toggleTheme = useCompressionStore((s) => s.toggleTheme);
   const openHistory = useHistoryStore((s) => s.open);
+  const openLogs = useLogStore((s) => s.open);
 
   return (
     <header
@@ -20,6 +22,14 @@ export function Header() {
         </h1>
       </div>
       <div className="flex items-center gap-1">
+        <button
+          onClick={openLogs}
+          className="rounded-md p-1.5 transition-colors hover:opacity-80"
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+          title="Application logs"
+        >
+          <Terminal size={16} style={{ color: "var(--text-secondary)" }} />
+        </button>
         <button
           onClick={openHistory}
           className="rounded-md p-1.5 transition-colors hover:opacity-80"

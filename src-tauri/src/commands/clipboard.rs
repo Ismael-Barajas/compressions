@@ -100,3 +100,62 @@ fn hex_val(b: u8) -> u8 {
         _ => 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urldecode_percent20() {
+        assert_eq!(urldecode("/path/to/my%20file.txt"), "/path/to/my file.txt");
+    }
+
+    #[test]
+    fn urldecode_passthrough() {
+        assert_eq!(urldecode("/normal/path.txt"), "/normal/path.txt");
+    }
+
+    #[test]
+    fn urldecode_empty() {
+        assert_eq!(urldecode(""), "");
+    }
+
+    #[test]
+    fn urldecode_truncated_percent() {
+        // Truncated %2 at end — should not panic
+        let result = urldecode("/path%2");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn urldecode_multiple_encoded() {
+        assert_eq!(urldecode("%2F%2F"), "//");
+    }
+
+    #[test]
+    fn hex_val_digits() {
+        for (b, expected) in [(b'0', 0), (b'5', 5), (b'9', 9)] {
+            assert_eq!(hex_val(b), expected);
+        }
+    }
+
+    #[test]
+    fn hex_val_lowercase() {
+        for (b, expected) in [(b'a', 10), (b'c', 12), (b'f', 15)] {
+            assert_eq!(hex_val(b), expected);
+        }
+    }
+
+    #[test]
+    fn hex_val_uppercase() {
+        for (b, expected) in [(b'A', 10), (b'C', 12), (b'F', 15)] {
+            assert_eq!(hex_val(b), expected);
+        }
+    }
+
+    #[test]
+    fn hex_val_invalid() {
+        assert_eq!(hex_val(b'g'), 0);
+        assert_eq!(hex_val(b'Z'), 0);
+    }
+}

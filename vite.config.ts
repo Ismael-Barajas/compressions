@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
@@ -25,6 +26,18 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       ignored: ["**/src-tauri/**"],
+    },
+  },
+  test: {
+    globals: true,
+    environment: "jsdom",
+    include: ["tests/**/*.test.ts"],
+    benchmark: {
+      include: ["tests/**/*.bench.ts"],
+    },
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts", "src/**/*.tsx"],
     },
   },
 }));

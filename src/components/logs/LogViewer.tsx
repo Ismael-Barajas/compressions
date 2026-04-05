@@ -1,0 +1,201 @@
+import { useEffect, useRef, useMemo } from "react";
+import { X, Trash2, Search, RefreshCw } from "lucide-react";
+import { useLogStore } from "../../stores/logStore";
+import type { LogLevel } from "../../types/compression";
+
+const LEVEL_COLORS: Record<string, string> = {
+  ERROR: "var(--error)",
+  WARN: "#f59e0b",
+  INFO: "var(--accent)",
+  DEBUG: "var(--text-muted)",
+  TRACE: "var(--text-muted)",
+};
+
+const LEVELS: Array<LogLevel | "ALL"> = ["ALL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
+
+function formatTimestamp(raw: string): string {
+  // tracing timestamps look like: 2026-04-04T12:00:00.000000Z
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+export function LogViewer() {
+  const isOpen = useLogStore((s) => s.isOpen);
+  const close = useLogStore((s) => s.close);
+  const entries = useLogStore((s) => s.entries);
+  const searchQuery = useLogStore((s) => s.searchQuery);
+  const setSearchQuery = useLogStore((s) => s.setSearchQuery);
+  const filterLevel = useLogStore((s) => s.filterLevel);
+  const setFilterLevel = useLogStore((s) => s.setFilterLevel);
+  const clearLogs = useLogStore((s) => s.clearLogs);
+  const loadLogs = useLogStore((s) => s.loadLogs);
+  const isLoading = useLogStore((s) => s.isLoading);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [isOpen, close]);
+
+  // Auto-scroll to bottom when entries change
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [entries]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return entries.filter((e) => {
+      if (filterLevel !== "ALL" && e.level !== filterLevel) return false;
+      if (q && !e.message.toLowerCase().includes(q) && !(e.target?.toLowerCase().includes(q))) {
+        return false;
+      }
+      return true;
+    });
+  }, [entries, searchQuery, filterLevel]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={(e) => {
+        if (e.target === backdropRef.current) close();
+      }}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border shadow-xl"
+        style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between border-b px-4 py-3"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            Application Logs
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadLogs}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
+              style={{ color: "var(--text-secondary)" }}
+              title="Refresh logs"
+            >
+              <RefreshCw size={14} />
+            </button>
+            {entries.length > 0 && (
+              <button
+                onClick={clearLogs}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
+                style={{ color: "var(--error)" }}
+                title="Clear logs"
+              >
+                <Trash2 size={14} />
+                Clear
+              </button>
+            )}
+            <button
+              onClick={close}
+              className="rounded p-1 transition-colors hover:opacity-80"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex items-center gap-2 border-b px-4 py-2" style={{ borderColor: "var(--border)" }}>
+          <div
+            className="flex items-center gap-2 rounded px-2 py-1 flex-1"
+            style={{ backgroundColor: "var(--bg-secondary)" }}
+          >
+            <Search size={14} style={{ color: "var(--text-muted)" }} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search logs..."
+              className="w-full bg-transparent text-xs outline-none"
+              style={{ color: "var(--text-primary)" }}
+            />
+          </div>
+          <div className="flex gap-1">
+            {LEVELS.map((level) => (
+              <button
+                key={level}
+                onClick={() => setFilterLevel(level)}
+                className="rounded px-2 py-1 text-xs transition-colors"
+                style={{
+                  backgroundColor: filterLevel === level ? "var(--accent)" : "var(--bg-secondary)",
+                  color: filterLevel === level ? "#fff" : "var(--text-secondary)",
+                }}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Log entries */}
+        <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-2 font-mono text-xs">
+          {isLoading ? (
+            <div className="py-8 text-center" style={{ color: "var(--text-muted)" }}>
+              Loading...
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-8 text-center" style={{ color: "var(--text-muted)" }}>
+              {searchQuery || filterLevel !== "ALL" ? "No matching log entries" : "No logs yet"}
+            </div>
+          ) : (
+            <div className="space-y-0.5">
+              {filtered.map((entry, i) => (
+                <div key={i} className="flex gap-2 rounded px-2 py-1" style={{ backgroundColor: "var(--bg-secondary)" }}>
+                  <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
+                    {formatTimestamp(entry.timestamp)}
+                  </span>
+                  <span
+                    className="font-semibold"
+                    style={{ color: LEVEL_COLORS[entry.level] ?? "var(--text-primary)", flexShrink: 0, width: "3rem" }}
+                  >
+                    {entry.level}
+                  </span>
+                  {entry.target && (
+                    <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
+                      {entry.target}
+                    </span>
+                  )}
+                  <span style={{ color: "var(--text-primary)", wordBreak: "break-all" }}>
+                    {entry.message}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div
+          className="border-t px-4 py-2 text-xs"
+          style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
+        >
+          {entries.length} {entries.length === 1 ? "entry" : "entries"}
+          {(searchQuery || filterLevel !== "ALL") && ` · ${filtered.length} shown`}
+        </div>
+      </div>
+    </div>
+  );
+}

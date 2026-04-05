@@ -67,6 +67,7 @@ pub async fn compress_image(
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     let job_id = Uuid::new_v4().to_string();
+    tracing::info!(input = %input, format = ?options.format, "Starting image compression");
     let file_name = Path::new(&input)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -141,11 +142,13 @@ pub async fn compress_image(
                 error: None,
             };
 
+            tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "Image compression completed");
             let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
             let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "image"));
             Ok(result)
         }
         Err(e) => {
+            tracing::warn!(input = %input, error = %e, "Image compression failed");
             let _ = on_progress.send(ProgressEvent::Error {
                 job_id: job_id.clone(),
                 message: e.clone(),

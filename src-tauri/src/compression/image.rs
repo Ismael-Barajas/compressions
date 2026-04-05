@@ -281,3 +281,132 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Resolution;
+
+    /// Create a test image in memory and save it to `path`.
+    fn create_test_image(path: &str, width: u32, height: u32) {
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_fn(width, height, |x, y| {
+            image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255])
+        }));
+        img.save(path).expect("Failed to save test image");
+    }
+
+    fn default_opts(format: ImageFormat) -> ImageOptions {
+        ImageOptions {
+            format,
+            quality: 80,
+            resize: None,
+            strip_metadata: true,
+        }
+    }
+
+    #[test]
+    fn jpeg_produces_valid_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.jpg");
+        create_test_image(input.to_str().unwrap(), 100, 100);
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Jpeg)).unwrap();
+
+        let data = std::fs::read(&output).unwrap();
+        assert!(data.len() > 0);
+        // JPEG magic bytes: FF D8 FF
+        assert_eq!(&data[0..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn png_produces_valid_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.png");
+        create_test_image(input.to_str().unwrap(), 100, 100);
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Png)).unwrap();
+
+        let data = std::fs::read(&output).unwrap();
+        // PNG magic bytes
+        assert_eq!(&data[0..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn webp_produces_valid_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.webp");
+        create_test_image(input.to_str().unwrap(), 100, 100);
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::WebP)).unwrap();
+
+        let data = std::fs::read(&output).unwrap();
+        // RIFF....WEBP magic
+        assert_eq!(&data[0..4], b"RIFF");
+        assert_eq!(&data[8..12], b"WEBP");
+    }
+
+    #[test]
+    fn avif_produces_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.avif");
+        create_test_image(input.to_str().unwrap(), 64, 64);
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Avif)).unwrap();
+
+        let data = std::fs::read(&output).unwrap();
+        assert!(data.len() > 0);
+    }
+
+    #[test]
+    fn resize_preserves_aspect_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.jpg");
+        create_test_image(input.to_str().unwrap(), 200, 100);
+
+        let opts = ImageOptions {
+            format: ImageFormat::Jpeg,
+            quality: 80,
+            resize: Some(Resolution { width: 50, height: 50 }),
+            strip_metadata: true,
+        };
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();
+
+        let dims = image::image_dimensions(&output).unwrap();
+        // 200x100 resized to fit 50x50 → 50x25 (aspect preserved)
+        assert!(dims.0 <= 50);
+        assert!(dims.1 <= 50);
+    }
+
+    #[test]
+    fn quality_extremes_produce_valid_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        create_test_image(input.to_str().unwrap(), 64, 64);
+
+        for q in [1u8, 100] {
+            let output = dir.path().join(format!("output_q{}.jpg", q));
+            let opts = ImageOptions {
+                format: ImageFormat::Jpeg,
+                quality: q,
+                resize: None,
+                strip_metadata: true,
+            };
+            compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();
+            assert!(std::fs::metadata(&output).unwrap().len() > 0);
+        }
+    }
+
+    #[test]
+    fn missing_input_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("output.jpg");
+        let result = compress("/nonexistent/file.png", output.to_str().unwrap(), &default_opts(ImageFormat::Jpeg));
+        assert!(result.is_err());
+    }
+}

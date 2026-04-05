@@ -25,6 +25,7 @@ pub async fn compress_video(
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     let job_id = Uuid::new_v4().to_string();
+    tracing::info!(input = %input, output = %output, "Starting video compression");
     let file_name = std::path::Path::new(&input)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -124,6 +125,11 @@ pub async fn compress_video(
                     });
                 }
 
+                if result.success {
+                    tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "Video compression completed");
+                } else {
+                    tracing::warn!(input = %result.input_path, error = ?result.error, "Video compression failed");
+                }
                 let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "video"));
                 return Ok(result);
             }

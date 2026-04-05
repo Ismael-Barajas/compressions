@@ -1,16 +1,27 @@
 mod commands;
-mod compression;
+pub mod compression;
 mod ffmpeg;
 mod history;
+mod logging;
 mod presets;
 mod state;
-mod types;
+pub mod types;
 
 use std::sync::Mutex;
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize tracing early — resolve log dir via platform dirs
+    let log_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("com.compressions.app")
+        .join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let _guard = logging::setup::init_tracing(log_dir);
+
+    tracing::info!("Compressions app starting");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -39,6 +50,9 @@ pub fn run() {
             commands::clipboard::save_clipboard_image,
             commands::history::get_history,
             commands::history::clear_history,
+            commands::logs::get_log_path,
+            commands::logs::read_logs,
+            commands::logs::clear_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

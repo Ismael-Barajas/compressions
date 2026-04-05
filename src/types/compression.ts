@@ -114,6 +114,15 @@ export interface HistoryEntry {
   error: string | null;
 }
 
+export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+
+export interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+  target: string | null;
+}
+
 export type ProgressEvent =
   | { event: "started"; data: { jobId: string; fileName: string } }
   | { event: "progress"; data: ProgressPayload }

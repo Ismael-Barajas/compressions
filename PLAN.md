@@ -25,200 +25,23 @@
 
 ---
 
-## Project Structure
-
-```
-compressions/
-├── src/
-│   ├── components/
-│   │   ├── controls/
-│   │   │   ├── VideoControls.tsx     # Codec, CRF, resolution, FPS, audio
-│   │   │   ├── ImageControls.tsx     # Format, quality, resize, strip metadata
-│   │   │   ├── AudioControls.tsx     # Format, bitrate, sample rate
-│   │   │   ├── GifControls.tsx       # FPS, width, colors, dither
-│   │   │   ├── PdfControls.tsx       # Quality preset, DPI override
-│   │   │   └── PresetSelector.tsx    # Built-in + user preset picker
-│   │   ├── dropzone/
-│   │   │   └── DropZone.tsx          # Drag-drop + browse (video/image/PDF)
-│   │   ├── file-list/
-│   │   │   ├── FileList.tsx          # Scrollable list + toolbar + start button
-│   │   │   └── FileItem.tsx          # Row: icon, progress, result, context menu
-│   │   ├── layout/
-│   │   │   ├── AppShell.tsx          # Left panel (files) + right panel (controls)
-│   │   │   └── Header.tsx            # Title + theme toggle
-│   │   └── output/
-│   │       ├── OutputSettings.tsx    # Mode, dir, subfolder name, filename template
-│   │       └── ResultsSummary.tsx    # Before/after totals + per-file table
-│   ├── hooks/
-│   │   └── useCompression.ts         # Orchestrates all compress flows + channels
-│   ├── lib/
-│   │   ├── commands.ts               # Typed invoke() wrappers for all Tauri commands
-│   │   └── fileUtils.ts              # getMediaType, buildOutputPath, getOutputFileName
-│   ├── stores/
-│   │   └── compressionStore.ts       # Zustand store — all app state + actions
-│   └── types/
-│       ├── compression.ts            # QueuedFile, all Options types, ProgressEvent
-│       └── presets.ts                # Preset type
-├── src-tauri/
-│   ├── tauri.conf.json               # externalBin (ffmpeg, ffprobe, gs), resources
-│   ├── tauri.windows.conf.json       # Windows-only: bundles gsdll64.dll
-│   ├── capabilities/default.json     # shell, dialog, fs permissions
-│   ├── binaries/                     # Sidecar binaries + gs-res/ — gitignored
-│   └── src/
-│       ├── lib.rs                    # App builder — plugins + invoke_handler
-│       ├── state.rs                  # AppState { active_jobs: HashMap<id, (child, path)> }
-│       ├── types.rs                  # All shared Rust types (Serialize/Deserialize)
-│       ├── commands/
-│       │   ├── mod.rs
-│       │   ├── video.rs              # compress_video(s_batch), cancel_compression
-│       │   ├── image.rs              # compress_image(s_batch)
-│       │   ├── audio.rs              # extract_audio(batch)
-│       │   ├── gif.rs                # convert_video_to_gif(batch)
-│       │   ├── pdf.rs                # compress_pdf(s_batch), resolve_gs_resource_dir
-│       │   ├── probe.rs              # probe_file, detect_media_type
-│       │   ├── scan.rs               # scan_paths (recurse dirs, filter by extension)
-│       │   └── presets.rs            # get/save/delete presets, get_default_output_dir
-│       ├── compression/
-│       │   ├── image.rs              # Native encoding: mozjpeg/oxipng/webp/ravif/gif
-│       │   └── progress.rs           # FFmpeg stderr parser (frame, time, speed → %)
-│       ├── ffmpeg/
-│       │   ├── args.rs               # FFmpeg + GIF arg builders
-│       │   └── probe.rs              # ffprobe JSON → duration, resolution, codec
-│       └── presets/
-│           ├── definitions.rs        # Built-in presets
-│           └── storage.rs            # Read/write presets.json in app_data_dir
-└── scripts/
-    ├── download-ffmpeg.sh / .ps1     # Download ffmpeg + ffprobe sidecars
-    └── download-gs.sh / .ps1         # Download gs binary + Resource/lib/iccprofiles
-```
-
----
-
-## Tauri Command API
-
-| Command                        | Parameters                                    | Returns               | Description                                     |
-| ------------------------------ | --------------------------------------------- | --------------------- | ----------------------------------------------- |
-| `compress_video`               | `input, output, options, onProgress: Channel` | `CompressionResult`   | Single video with streaming progress            |
-| `compress_videos_batch`        | `files[], options, onProgress: Channel`       | `CompressionResult[]` | Sequential batch video                          |
-| `compress_image`               | `input, output, options, onProgress: Channel` | `CompressionResult`   | Single image with started/completed events      |
-| `compress_images_batch`        | `files[], options, onProgress: Channel`       | `CompressionResult[]` | Parallel batch image with per-file events       |
-| `cancel_compression`           | `jobId`                                       | `()`                  | Kill active FFmpeg process via CommandChild     |
-| `extract_audio`                | `input, output, options, onProgress: Channel` | `CompressionResult`   | Extract audio track via FFmpeg `-vn`            |
-| `extract_audio_batch`          | `files[], options, onProgress: Channel`       | `CompressionResult[]` | Sequential batch audio extraction               |
-| `convert_video_to_gif`         | `input, output, options, onProgress: Channel` | `CompressionResult`   | Two-pass FFmpeg palette GIF conversion          |
-| `convert_videos_to_gif_batch`  | `files[], options, onProgress: Channel`       | `CompressionResult[]` | Sequential batch GIF conversion                 |
-| `compress_pdf`                 | `input, output, options, onProgress: Channel` | `CompressionResult`   | Ghostscript recompression (indeterminate)       |
-| `compress_pdfs_batch`          | `files[], options, onProgress: Channel`       | `CompressionResult[]` | Sequential batch PDF                            |
-| `resolve_gs_resource_dir`      | —                                             | `string`              | Resolves gs-res/ path (dev vs prod)             |
-| `probe_file`                   | `path`                                        | `FileInfo`            | File metadata — size, resolution, duration      |
-| `detect_media_type`            | `path`                                        | `MediaType`           | Classify by extension → video/image/pdf         |
-| `scan_paths`                   | `paths[]`                                     | `string[]`            | Recurse dirs, filter by supported extensions    |
-| `get_presets`                  | —                                             | `Preset[]`            | Built-ins + user presets merged                 |
-| `save_preset`                  | `preset`                                      | `()`                  | Persist user preset to JSON                     |
-| `delete_preset`                | `id`                                          | `()`                  | Remove user preset (rejects built-ins)          |
-| `get_default_output_dir`       | —                                             | `string`              | Platform Videos/Downloads/Home dir             |
-
----
-
-## Built-in Presets
-
-| ID             | Name            | Type  | Key Settings                          |
-| -------------- | --------------- | ----- | ------------------------------------- |
-| `video-web`    | Web Optimized   | Video | H.264, CRF 28, 720p, AAC 128k        |
-| `video-high`   | High Quality    | Video | H.265, CRF 20, original res, AAC 192k |
-| `video-small`  | Small File Size | Video | H.265, CRF 32, 480p, AAC 96k         |
-| `video-social` | Social Media    | Video | H.264, CRF 23, 1080p, AAC 128k       |
-| `image-web`    | Web Optimized   | Image | WebP, quality 80, strip metadata     |
-| `image-high`   | High Quality    | Image | PNG lossless (oxipng preset 3)       |
-| `image-small`  | Small File Size | Image | AVIF, quality 60                     |
-| `image-thumb`  | Thumbnail       | Image | JPEG, quality 70, 300px resize       |
-
----
-
-## Key Dependencies
-
-**Rust (Cargo.toml):** `tauri 2`, `tauri-plugin-shell/dialog/fs 2`, `serde + serde_json`, `uuid v4`, `tokio full`, `image 0.25`, `mozjpeg 0.10` (needs NASM), `oxipng 9`, `webp 0.3`, `ravif 0.11` (slow first compile), `imagequant 4`, `gif 0.13`, `img-parts 0.4`, `thiserror 2`, `regex 1`, `dirs-next 2`
-
-**Node (package.json):** `@tauri-apps/api ^2`, `@tauri-apps/plugin-dialog/fs/shell ^2`, `lucide-react`, `react ^19`, `zustand ^5`
-
-**Prerequisites:** Node 18+, Rust (rustup), NASM (`choco install nasm` / `brew install nasm`)
-
----
-
 ## Implementation Status
 
 | Phase                      | Status      | Notes                                                       |
 | -------------------------- | ----------- | ----------------------------------------------------------- |
-| 1 — Scaffolding            | ✅ Complete | TS 0 errors, Vite build passes                              |
-| 2 — Compression Flow       | ✅ Complete | Hook wired, folder support, output modes, name templates    |
-| 3 — Rust Compilation       | ✅ Complete | Compiles cleanly                                            |
-| 4 — FFmpeg Integration     | ✅ Complete | H.264/H.265/AV1, cancellation, batch tested                 |
-| 5 — Image Compression      | ✅ Complete | All formats; 6 bugs fixed (GIF animation, size guard, EXIF) |
+| 1–5 — Core App             | ✅ Complete | Scaffolding, compression flow, Rust, FFmpeg, image formats  |
 | 6 — Polish                 | 🔲 Deferred | App icons, dedup, conflict handling, keyboard shortcuts     |
 | 7 — CI/CD & Packaging      | 🔲 Deferred | GitHub Actions release workflow, code signing               |
 | 8 — Bug Fixes & Quick Wins | ✅ Complete | AVIF input, dimensions in UI, subfolder/template output     |
 | 9 — New Media Capabilities | ✅ Complete | Audio extraction, video-to-GIF, GIF optimization, PDF (GS)  |
-| **10 — UX Enhancements**   | ✅ Complete | 10.1 Add files while compressing, 10.2 Clipboard paste     |
-| 11 — Persistence           | 🔨 In Progress | 11.1 History ✅, 11.2 Log viewer planned                   |
-| 12 — Final Polish          | 🔲 Planned  | Cross-cutting integration, keyboard shortcuts               |
+| 10 — UX Enhancements       | ✅ Complete | Add-during-compress, clipboard paste                        |
+| 11 — Persistence           | ✅ Complete | History panel, log viewer                                   |
+| **12 — Testing**           | ✅ Complete | Unit tests, integration tests, perf benchmarks, CI          |
+| 13 — Final Polish          | 🔲 Planned  | Cross-cutting integration, keyboard shortcuts               |
 
 ---
 
-## Phase 10 — UX Enhancements
-
-### 10.1 Add Files While Compressing
-
-**Problem:** `isCompressing` flag disables all file-adding UI. Files added after compression starts are never processed.
-
-- `src/components/file-list/FileList.tsx` — Remove `disabled={isCompressing}` from "Add More" and "Add Folder". Keep on "Clear All".
-- `src/hooks/useCompression.ts` — Refactor to drain-loop pattern:
-  ```
-  while (true) {
-    const queued = getState().files.filter(f => f.status === "queued");
-    if (queued.length === 0) break;
-    await Promise.allSettled(processBatch(queued));
-  }
-  ```
-- `src/components/layout/AppShell.tsx` — Move drag-drop listener to AppShell level so files can be dropped onto file list during compression.
-
-### 10.2 Clipboard Paste Support
-
-- **New:** `src-tauri/src/commands/clipboard.rs` — `read_clipboard_files()` (CF_HDROP via `arboard`), `save_clipboard_image()` (save to temp file)
-- **New:** `src/hooks/useClipboardPaste.ts` — Listens for `paste` on document; handles image blobs and file references
-- `src-tauri/Cargo.toml` — Add `arboard = "3"`
-- `src-tauri/src/commands/mod.rs`, `lib.rs` — Register clipboard commands
-- `src/lib/commands.ts` — Add `readClipboardFiles()`, `saveClipboardImage()`
-- `src/components/layout/AppShell.tsx` — Install `useClipboardPaste` at app level
-
----
-
-## Phase 11 — Persistence & Observability
-
-### 11.1 Compression History
-
-- **New:** `src-tauri/src/history/mod.rs` + `storage.rs` — JSON in AppData (`history.json`), cap 1000 entries, follows `presets/storage.rs` pattern
-- **New:** `src-tauri/src/commands/history.rs` — `get_history`, `clear_history`
-- **New:** `src/components/history/HistoryPanel.tsx` — Modal: timestamp, filename, sizes, savings %, duration. Search/filter + clear button.
-- **New:** `src/stores/historyStore.ts`
-- `src-tauri/src/types.rs` — Add `HistoryEntry { id, timestamp, input_path, output_path, input_size, output_size, duration_ms, media_type, success, error }`
-- `src-tauri/src/commands/image.rs`, `video.rs`, `audio.rs`, `gif.rs`, `pdf.rs` — Append to history after each compression
-- `src/types/compression.ts` — Add `HistoryEntry` TS interface
-- `src/lib/commands.ts` — Add wrappers
-- `src/components/layout/Header.tsx` — Add "History" button (Clock icon)
-
-### 11.2 Log Viewer
-
-- **New:** `src-tauri/src/commands/logs.rs` — `get_log_path()`, `read_logs(lines)`, `open_log_file()`
-- **New:** `src/components/logs/LogViewer.tsx` — Modal: color-coded entries (INFO/WARN/ERROR), level filter, search, auto-refresh
-- **New:** `src/stores/logStore.ts`
-- `src-tauri/Cargo.toml` — Replace `log + env_logger` with `tracing + tracing-subscriber + tracing-appender` (JSON file + stderr dual output)
-- `src-tauri/src/lib.rs` — Initialize `tracing_subscriber` with dual output
-- All Rust files — Replace `log::info!()` with `tracing::info!()` with structured fields
-- `src/components/layout/Header.tsx` — Add "Logs" button (Terminal icon)
-
----
-
-## Phase 12 — Final Polish
+## Phase 13 — Final Polish
 
 - [ ] All media types work with all output modes (subfolder, custom dir, name template)
 - [ ] Clipboard paste + add-during-compression work together
@@ -231,7 +54,120 @@ compressions/
 
 ---
 
-## Verification Plan
+## Phase 12 — Testing & Performance Benchmarking
+
+### 13.1 Infrastructure Setup
+
+**Frontend (Vitest):**
+- Install: `vitest`, `@vitest/coverage-v8`, `jsdom`
+- Add scripts to `package.json`: `test`, `test:run`, `test:coverage`, `test:bench`
+- Add `test` block to `vite.config.ts` (globals, jsdom, coverage)
+
+**Rust (Criterion):**
+- Add to `Cargo.toml` dev-deps: `criterion 0.5` (html_reports), `tempfile 3`
+- Add `[[bench]] name = "compression_bench" harness = false`
+
+### 13.2 Rust Unit Tests (Pure Functions)
+
+`#[cfg(test)]` blocks added to each file — no visibility changes needed.
+
+| File | Tests |
+|------|-------|
+| `compression/progress.rs` | `parse_progress_line`: typical line, time-only, capped at 100%, zero duration, garbled → None, ETA accuracy |
+| `ffmpeg/args.rs` | `build_video_args`: all 3 codecs (AV1 requires `-pix_fmt yuv420p`), resolution filter, audio modes, MP4 faststart, bitrate/fps. `build_audio_extraction_args`: codec mapping, no `-b:a` for lossless. `build_gif_palette_args` + `build_gif_encode_args`: dither modes, filtergraph |
+| `commands/pdf.rs` | `build_gs_args`: each quality preset, DPI args present/absent, resource dir `-I` paths, always-present flags |
+| `commands/probe.rs` | `detect_media_type`: all extensions, case insensitivity, unknown/missing → Err |
+| `commands/clipboard.rs` | `urldecode`: %20, passthrough, empty, truncated % → no panic. `hex_val`: 0-9, a-f, A-F, invalid |
+| `logging/setup.rs` | `parse_log_line`: INFO/WARN/ERROR/DEBUG with target, empty/garbage → None |
+
+### 13.3 Frontend Unit Tests (Pure Functions + Store)
+
+| File | Tests |
+|------|-------|
+| `src/lib/fileUtils.test.ts` | All 10 functions: `getMediaType` (all extensions, case), `getFileName` (Unix/Windows), `formatFileSize` (0 B, boundaries, 1.5 KB), `getSavingsPercent` (div-by-zero guard), `getOutputFileName` ({name}/{date}/{time} substitution, GIF preservation), `getAudioExtension`, `getParentDir`, `buildOutputPath` |
+| `src/stores/compressionStore.test.ts` | `addFiles` deduplication, state transitions (queued→processing→complete/error), `retryFile`, `updateProgress` by jobId, theme toggle + localStorage |
+
+### 13.4 Rust Integration Tests (Image Compression)
+
+In `compression/image.rs` `#[cfg(test)]` block. Generate images programmatically with `image` crate; use `tempfile` for output.
+
+- JPEG: output is valid JPEG, smaller than raw
+- PNG: valid PNG output
+- WebP: output starts with RIFF/WEBP magic bytes
+- AVIF: output exists and non-empty
+- Resize: dimensions ≤ target, aspect ratio preserved
+- Quality extremes (1, 100): both produce valid output
+- Missing input: returns `Err`
+
+### 13.5 Performance Benchmarks
+
+**Rust (`src-tauri/benches/compression_bench.rs`):**
+| Benchmark | Target |
+|-----------|--------|
+| `parse_progress_line` × 10,000 | < 10ms |
+| JPEG q80 (1920×1080) | < 200ms |
+| PNG (1920×1080) | < 1000ms |
+| WebP q75 (1920×1080) | < 500ms |
+| AVIF q60 (1920×1080) | < 3000ms |
+| JPEG q80 at 256², 1024², 1920×1080, 3840×2160 | scaling profile |
+
+**Frontend (`src/lib/fileUtils.bench.ts`, `src/stores/compressionStore.bench.ts`):**
+| Benchmark | Target |
+|-----------|--------|
+| `getOutputFileName` × 10,000 | < 50ms |
+| `getMediaType` × 100,000 | < 100ms |
+| `addFiles` with 1,000 files | < 50ms |
+| `updateProgress` on 500-file store | < 5ms |
+
+### 13.6 CI/CD Pipeline (`.github/workflows/test.yml`)
+
+| Job | Runs On | What |
+|-----|---------|------|
+| `frontend-tests` | ubuntu-latest | `npm ci` → `vitest run` → coverage upload |
+| `rust-tests` | ubuntu + macos + windows | Install NASM + Tauri deps → `cargo test --lib` |
+| `rust-benchmarks` | ubuntu (main push only) | `cargo bench` → artifact upload |
+
+Cross-platform Rust tests catch mozjpeg/oxipng/ravif platform-specific compile issues.
+
+### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `src/lib/fileUtils.test.ts` | Frontend utility unit tests |
+| `src/stores/compressionStore.test.ts` | Store state transition tests |
+| `src/lib/fileUtils.bench.ts` | Frontend perf benchmarks |
+| `src/stores/compressionStore.bench.ts` | Store perf benchmarks |
+| `src-tauri/benches/compression_bench.rs` | Rust Criterion benchmarks |
+| `.github/workflows/test.yml` | CI/CD pipeline |
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `package.json` | Add vitest deps + test scripts |
+| `vite.config.ts` | Add `test` config block |
+| `src-tauri/Cargo.toml` | Add criterion, tempfile + bench target |
+| `src-tauri/src/compression/progress.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/ffmpeg/args.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/commands/pdf.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/commands/probe.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/commands/clipboard.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/logging/setup.rs` | Add `#[cfg(test)]` module |
+| `src-tauri/src/compression/image.rs` | Add `#[cfg(test)]` integration tests |
+
+### Verification
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+npx vitest run
+cargo bench --manifest-path src-tauri/Cargo.toml --bench compression_bench
+npx vitest bench
+npx tsc --noEmit
+```
+
+---
+
+## Verification Plan (Manual)
 
 | # | Test                 | Steps                                                                             |
 | - | -------------------- | --------------------------------------------------------------------------------- |

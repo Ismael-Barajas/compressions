@@ -10,6 +10,7 @@ import type {
   MediaType,
   ProgressEvent,
   HistoryEntry,
+  LogEntry,
 } from "../types/compression";
 import type { Preset } from "../types/presets";
 
@@ -149,4 +150,16 @@ export async function getHistory(): Promise<HistoryEntry[]> {
 
 export async function clearHistory(): Promise<void> {
   return invoke("clear_history");
+}
+
+export async function getLogPath(): Promise<string> {
+  return invoke("get_log_path");
+}
+
+export async function readLogs(maxLines?: number): Promise<LogEntry[]> {
+  return invoke("read_logs", { maxLines: maxLines ?? null });
+}
+
+export async function clearLogs(): Promise<void> {
+  return invoke("clear_logs");
 }

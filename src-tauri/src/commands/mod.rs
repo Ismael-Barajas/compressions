@@ -3,6 +3,7 @@ pub mod clipboard;
 pub mod gif;
 pub mod history;
 pub mod image;
+pub mod logs;
 pub mod pdf;
 pub mod presets;
 pub mod probe;

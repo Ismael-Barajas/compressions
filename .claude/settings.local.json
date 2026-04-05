@@ -18,7 +18,10 @@
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
       "Bash(npx vite:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(ls -la /Users/ismaelbarajas/Code/GitHub/compressions/*.md)",
+      "Bash(cargo test:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

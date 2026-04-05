@@ -32,11 +32,20 @@ imagequant = "4"
 img-parts = "0.4"
 thiserror = "2"
 regex = "1"
-log = "0.4"
-env_logger = "0.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
 dirs-next = "2"
 arboard = "3"
 chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
+[[bench]]
+name = "compression_bench"
+harness = false
 
 [profile.release]
 panic = "abort"

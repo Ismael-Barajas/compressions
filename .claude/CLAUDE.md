@@ -8,7 +8,7 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-Phase 11.1 (Compression History) is complete. Resume from **Phase 11.2: Log Viewer**.
+Phase 12 (Testing & Performance Benchmarking) is complete. Resume from **Phase 13: Final Polish**.
 
 ## Stack
 
