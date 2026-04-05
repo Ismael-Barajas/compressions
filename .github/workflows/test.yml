@@ -45,8 +45,8 @@ jobs:
 
       - name: Create sidecar stubs
         run: |
-          mkdir -p src-tauri/binaries/gs-res
-          touch src-tauri/binaries/gs-res/stub
+          mkdir -p src-tauri/binaries/gs-res/Resource/Init src-tauri/binaries/gs-res/lib
+          touch src-tauri/binaries/gs-res/Resource/Init/stub src-tauri/binaries/gs-res/lib/stub
           for bin in ffmpeg ffprobe gs; do
             touch "src-tauri/binaries/${bin}-x86_64-unknown-linux-gnu"
           done
@@ -95,8 +95,8 @@ jobs:
       - name: Create sidecar stubs
         shell: bash
         run: |
-          mkdir -p src-tauri/binaries/gs-res
-          touch src-tauri/binaries/gs-res/stub
+          mkdir -p src-tauri/binaries/gs-res/Resource/Init src-tauri/binaries/gs-res/lib
+          touch src-tauri/binaries/gs-res/Resource/Init/stub src-tauri/binaries/gs-res/lib/stub
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             triple="x86_64-unknown-linux-gnu"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -132,8 +132,8 @@ jobs:
 
       - name: Create sidecar stubs
         run: |
-          mkdir -p src-tauri/binaries/gs-res
-          touch src-tauri/binaries/gs-res/stub
+          mkdir -p src-tauri/binaries/gs-res/Resource/Init src-tauri/binaries/gs-res/lib
+          touch src-tauri/binaries/gs-res/Resource/Init/stub src-tauri/binaries/gs-res/lib/stub
           for bin in ffmpeg ffprobe gs; do
             touch "src-tauri/binaries/${bin}-x86_64-unknown-linux-gnu"
           done

@@ -275,15 +275,17 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
             }
         }
 
-        let mut frame = Frame::default();
-        frame.width = raw.width;
-        frame.height = raw.height;
-        frame.left = raw.left;
-        frame.top = raw.top;
-        frame.delay = raw.delay;
-        frame.palette = Some(palette_bytes);
-        frame.buffer = std::borrow::Cow::Owned(indexed_pixels);
-        frame.transparent = transparent_idx;
+        let frame = Frame {
+            width: raw.width,
+            height: raw.height,
+            left: raw.left,
+            top: raw.top,
+            delay: raw.delay,
+            palette: Some(palette_bytes),
+            buffer: std::borrow::Cow::Owned(indexed_pixels),
+            transparent: transparent_idx,
+            ..Default::default()
+        };
 
         encoder
             .write_frame(&frame)

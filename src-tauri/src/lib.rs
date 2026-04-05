@@ -14,7 +14,7 @@ use std::sync::Mutex;
 pub fn run() {
     // Initialize tracing early — resolve log dir via platform dirs
     let log_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("com.compressions.app")
         .join("logs");
     std::fs::create_dir_all(&log_dir).ok();
