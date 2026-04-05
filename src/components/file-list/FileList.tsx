@@ -43,6 +43,7 @@ export function FileList() {
             extensions: [
               "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v",
               "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif",
+              "pdf",
             ],
           },
         ],

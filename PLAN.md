@@ -38,7 +38,7 @@
 | 11 — Persistence           | ✅ Complete | History panel, log viewer                                   |
 | **12 — Testing**           | ✅ Complete | Unit tests, integration tests, perf benchmarks, CI          |
 | **O — Optimization**       | ✅ Complete | O-1 through O-6 all done |
-| 13 — Final Polish          | 🔲 Planned  | Cross-cutting integration, keyboard shortcuts               |
+| 13 — Final Polish          | ✅ Complete | Keyboard shortcuts, filename conflict resolution, UI fixes  |
 
 ---
 
@@ -148,16 +148,18 @@ Speed 7 is ~41% faster than speed 6 with negligible quality difference. Thread c
 
 ---
 
-## Phase 13 — Final Polish
+## Phase 13 — Final Polish ✅
 
-- [ ] All media types work with all output modes (subfolder, custom dir, name template)
-- [ ] Clipboard paste + add-during-compression work together
-- [ ] AVIF round-trip (AVIF input → any format, any format → AVIF) with transparency
-- [ ] History recorded for all types (video, image, PDF, audio, GIF)
-- [ ] Log output verified for all operations
-- [ ] Update DropZone text to reflect all supported formats
-- [ ] Keyboard shortcuts: `Ctrl+V` paste, `Space` start, `Escape` cancel
-- [ ] Phase 6 deferred items: app icons, file dedup, output filename conflict (`_2`, `_3`)
+- [x] All media types work with all output modes (subfolder, custom dir, name template)
+- [x] Clipboard paste + add-during-compression work together
+- [x] AVIF round-trip (AVIF input → any format, any format → AVIF) with transparency
+- [x] History recorded for all types (video, image, PDF, audio, GIF)
+- [x] Log output verified for all operations
+- [x] Update DropZone text to reflect all supported formats (added GIF)
+- [x] Keyboard shortcuts: `Ctrl+V` paste, `Space` start, `Escape` cancel
+- [x] File dedup (already in `addFiles` via path Set)
+- [x] Output filename conflict resolution (`_2`, `_3` suffixes via `resolve_output_conflict`)
+- [ ] App icons (deferred — requires custom design)
 
 
 ---

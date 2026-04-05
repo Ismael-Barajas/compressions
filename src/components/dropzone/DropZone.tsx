@@ -95,7 +95,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
         or click to browse
       </p>
       <p className="mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
-        Supports MP4, MKV, AVI, MOV, WebM, JPG, PNG, WebP, AVIF, PDF, and more
+        Supports MP4, MKV, AVI, MOV, WebM, JPG, PNG, WebP, AVIF, GIF, PDF, and more
       </p>
       <div className="mt-4 flex items-center gap-2">
         <button

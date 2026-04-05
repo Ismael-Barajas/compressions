@@ -6,6 +6,7 @@ mod logging;
 mod presets;
 mod state;
 pub mod types;
+mod utils;
 
 use state::AppState;
 use std::sync::Mutex;

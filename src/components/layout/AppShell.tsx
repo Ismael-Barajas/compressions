@@ -3,6 +3,7 @@ import { useCompressionStore } from "../../stores/compressionStore";
 import { probeFile, scanPaths } from "../../lib/commands";
 import { getMediaType, getFileName } from "../../lib/fileUtils";
 import { useClipboardPaste } from "../../hooks/useClipboardPaste";
+import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { DropZone } from "../dropzone/DropZone";
 import { FileList } from "../file-list/FileList";
 import { VideoControls } from "../controls/VideoControls";
@@ -72,6 +73,9 @@ export function AppShell() {
 
   // App-level clipboard paste listener — Ctrl+V / Cmd+V to add files
   useClipboardPaste(processFilePaths);
+
+  // Global keyboard shortcuts — Space to start, Escape to cancel
+  useKeyboardShortcuts();
 
   // App-level drag-drop listener — works even during compression
   useEffect(() => {

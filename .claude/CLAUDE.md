@@ -8,7 +8,7 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-Phase O (Performance Optimization) is complete — all 6 sub-phases done. Resume from **Phase 13: Final Polish**.
+Phase 13 (Final Polish) is complete. All planned phases done. Only remaining: custom app icons (Phase 6 deferred — requires design work).
 
 ## Stack
 

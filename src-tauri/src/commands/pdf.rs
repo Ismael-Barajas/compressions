@@ -7,6 +7,7 @@ use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::history::storage as history;
+use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
 };
@@ -101,6 +102,9 @@ pub async fn compress_pdf(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
+
+    // Avoid overwriting existing files — append _2, _3, etc.
+    let output = resolve_output_conflict(&output);
 
     let gs_res_dir = resolve_gs_resource_dir(&app);
     let args = build_gs_args(&input, &output, &options, gs_res_dir.as_deref());

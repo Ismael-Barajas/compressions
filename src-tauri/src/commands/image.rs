@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
+use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
 };
@@ -84,6 +85,9 @@ pub async fn compress_image(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
+
+    // Avoid overwriting existing files — append _2, _3, etc.
+    let output = resolve_output_conflict(&output);
 
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
