@@ -19,10 +19,9 @@ pub fn load_user_presets(app: &AppHandle) -> Result<Vec<Preset>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let data = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read presets file: {}", e))?;
-    serde_json::from_str(&data)
-        .map_err(|e| format!("Failed to parse presets file: {}", e))
+    let data =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read presets file: {}", e))?;
+    serde_json::from_str(&data).map_err(|e| format!("Failed to parse presets file: {}", e))
 }
 
 pub fn save_user_preset(app: &AppHandle, preset: &Preset) -> Result<(), String> {

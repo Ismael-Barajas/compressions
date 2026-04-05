@@ -1,14 +1,16 @@
 use std::path::Path;
 use std::time::Instant;
 
-use tauri::{AppHandle, ipc::Channel};
-use tauri_plugin_shell::ShellExt;
+use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
-use crate::types::{BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent};
+use crate::types::{
+    BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
+};
 
 fn is_avif_input(path: &str) -> bool {
     Path::new(path)

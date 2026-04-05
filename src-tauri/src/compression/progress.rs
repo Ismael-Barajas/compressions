@@ -8,12 +8,10 @@ pub struct ParsedProgress {
     pub eta_seconds: Option<f64>,
 }
 
-static FRAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"frame=\s*(\d+)").unwrap());
+static FRAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"frame=\s*(\d+)").unwrap());
 static TIME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"time=(\d+):(\d+):(\d+)\.(\d+)").unwrap());
-static SPEED_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"speed=\s*([\d.]+)x").unwrap());
+static SPEED_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"speed=\s*([\d.]+)x").unwrap());
 
 pub fn parse_progress_line(line: &str, total_duration: f64) -> Option<ParsedProgress> {
     // We need at least the time field to compute progress
@@ -32,13 +30,9 @@ pub fn parse_progress_line(line: &str, total_duration: f64) -> Option<ParsedProg
         0.0
     };
 
-    let current_frame = FRAME_RE
-        .captures(line)
-        .and_then(|c| c[1].parse().ok());
+    let current_frame = FRAME_RE.captures(line).and_then(|c| c[1].parse().ok());
 
-    let speed = SPEED_RE
-        .captures(line)
-        .map(|c| format!("{}x", &c[1]));
+    let speed = SPEED_RE.captures(line).map(|c| format!("{}x", &c[1]));
 
     let eta_seconds = SPEED_RE
         .captures(line)

@@ -12,7 +12,10 @@ pub fn builtin_presets() -> Vec<Preset> {
             video_options: Some(VideoOptions {
                 codec: VideoCodec::H264,
                 crf: 28,
-                resolution: Some(Resolution { width: 1280, height: 720 }),
+                resolution: Some(Resolution {
+                    width: 1280,
+                    height: 720,
+                }),
                 bitrate: None,
                 framerate: None,
                 audio_codec: AudioCodec::AAC,
@@ -46,7 +49,10 @@ pub fn builtin_presets() -> Vec<Preset> {
             video_options: Some(VideoOptions {
                 codec: VideoCodec::H265,
                 crf: 32,
-                resolution: Some(Resolution { width: 854, height: 480 }),
+                resolution: Some(Resolution {
+                    width: 854,
+                    height: 480,
+                }),
                 bitrate: None,
                 framerate: None,
                 audio_codec: AudioCodec::AAC,
@@ -63,7 +69,10 @@ pub fn builtin_presets() -> Vec<Preset> {
             video_options: Some(VideoOptions {
                 codec: VideoCodec::H264,
                 crf: 23,
-                resolution: Some(Resolution { width: 1920, height: 1080 }),
+                resolution: Some(Resolution {
+                    width: 1920,
+                    height: 1080,
+                }),
                 bitrate: None,
                 framerate: None,
                 audio_codec: AudioCodec::AAC,
@@ -124,7 +133,10 @@ pub fn builtin_presets() -> Vec<Preset> {
             image_options: Some(ImageOptions {
                 format: ImageFormat::Jpeg,
                 quality: 70,
-                resize: Some(Resolution { width: 300, height: 300 }),
+                resize: Some(Resolution {
+                    width: 300,
+                    height: 300,
+                }),
                 strip_metadata: true,
             }),
         },

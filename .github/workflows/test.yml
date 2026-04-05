@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -46,6 +46,7 @@ jobs:
       - name: Create sidecar stubs
         run: |
           mkdir -p src-tauri/binaries/gs-res
+          touch src-tauri/binaries/gs-res/stub
           for bin in ffmpeg ffprobe gs; do
             touch "src-tauri/binaries/${bin}-x86_64-unknown-linux-gnu"
           done
@@ -64,7 +65,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -95,6 +96,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/binaries/gs-res
+          touch src-tauri/binaries/gs-res/stub
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             triple="x86_64-unknown-linux-gnu"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -102,6 +104,7 @@ jobs:
           else
             triple="x86_64-pc-windows-msvc"
             ext=".exe"
+            touch src-tauri/binaries/gsdll64.dll
           fi
           for bin in ffmpeg ffprobe gs; do
             touch "src-tauri/binaries/${bin}-${triple}${ext}"
@@ -116,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -130,6 +133,7 @@ jobs:
       - name: Create sidecar stubs
         run: |
           mkdir -p src-tauri/binaries/gs-res
+          touch src-tauri/binaries/gs-res/stub
           for bin in ffmpeg ffprobe gs; do
             touch "src-tauri/binaries/${bin}-x86_64-unknown-linux-gnu"
           done
@@ -137,7 +141,7 @@ jobs:
       - name: Run benchmarks
         run: cargo bench --manifest-path src-tauri/Cargo.toml --bench compression_bench
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: benchmark-results
           path: src-tauri/target/criterion/

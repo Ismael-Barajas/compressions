@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use tauri::{AppHandle, State, ipc::Channel};
-use tauri_plugin_shell::ShellExt;
+use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::compression::progress::parse_progress_line;
@@ -32,9 +32,7 @@ pub async fn convert_video_to_gif(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
 
     // Ensure the output directory exists
     if let Some(parent) = std::path::Path::new(&output).parent() {
@@ -89,7 +87,9 @@ pub async fn convert_video_to_gif(
     // Store child handle for cancellation
     {
         let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state.active_jobs.insert(job_id.clone(), (child, output.clone()));
+        app_state
+            .active_jobs
+            .insert(job_id.clone(), (child, output.clone()));
     }
 
     let _ = on_progress.send(ProgressEvent::Started {
@@ -128,9 +128,7 @@ pub async fn convert_video_to_gif(
                 }
 
                 let duration_ms = start.elapsed().as_millis() as u64;
-                let output_size = std::fs::metadata(&output)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
+                let output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
 
                 let success = status.code == Some(0);
                 let result = CompressionResult {

@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::time::Instant;
 
-use tauri::{AppHandle, Manager, ipc::Channel};
-use tauri_plugin_shell::ShellExt;
+use tauri::{ipc::Channel, AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::history::storage as history;
@@ -95,9 +95,7 @@ pub async fn compress_pdf(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
 
     if let Some(parent) = std::path::Path::new(&output).parent() {
         std::fs::create_dir_all(parent)
@@ -130,9 +128,7 @@ pub async fn compress_pdf(
             }
             CommandEvent::Terminated(status) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
-                let output_size = std::fs::metadata(&output)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
+                let output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
 
                 let success = status.code == Some(0);
                 let result = CompressionResult {
@@ -213,7 +209,12 @@ mod tests {
 
     #[test]
     fn gs_args_with_dpi() {
-        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, Some(150)), None);
+        let args = build_gs_args(
+            "in.pdf",
+            "out.pdf",
+            &opts(PdfQuality::Ebook, Some(150)),
+            None,
+        );
         assert!(args.contains(&"-dColorImageResolution=150".to_string()));
         assert!(args.contains(&"-dGrayImageResolution=150".to_string()));
         assert!(args.contains(&"-dMonoImageResolution=150".to_string()));
@@ -227,7 +228,12 @@ mod tests {
 
     #[test]
     fn gs_args_with_resource_dir() {
-        let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, None), Some("/res"));
+        let args = build_gs_args(
+            "in.pdf",
+            "out.pdf",
+            &opts(PdfQuality::Ebook, None),
+            Some("/res"),
+        );
         assert!(args.contains(&"-I/res/Resource/Init".to_string()));
         assert!(args.contains(&"-I/res/lib".to_string()));
         assert!(args.contains(&"-I/res/Resource".to_string()));

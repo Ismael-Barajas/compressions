@@ -1,4 +1,7 @@
-use crate::types::{AudioCodec, AudioExtractionOptions, AudioOutputFormat, DitherMode, GifConversionOptions, VideoCodec, VideoOptions};
+use crate::types::{
+    AudioCodec, AudioExtractionOptions, AudioOutputFormat, DitherMode, GifConversionOptions,
+    VideoCodec, VideoOptions,
+};
 
 pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -118,7 +121,10 @@ pub fn build_audio_extraction_args(
     args.push(codec_str.into());
 
     // Bitrate (not applicable for lossless formats)
-    if !matches!(opts.format, AudioOutputFormat::Flac | AudioOutputFormat::Wav) {
+    if !matches!(
+        opts.format,
+        AudioOutputFormat::Flac | AudioOutputFormat::Wav
+    ) {
         if let Some(ref bitrate) = opts.bitrate {
             args.push("-b:a".into());
             args.push(bitrate.clone());
@@ -253,7 +259,10 @@ mod tests {
     #[test]
     fn resolution_filter() {
         let mut opts = default_video_opts();
-        opts.resolution = Some(crate::types::Resolution { width: 1280, height: 720 });
+        opts.resolution = Some(crate::types::Resolution {
+            width: 1280,
+            height: 720,
+        });
         let args = build_video_args("in.mp4", "out.mp4", &opts);
         assert!(args.contains(&"-vf".to_string()));
         let vf = args.iter().find(|a| a.contains("scale=")).unwrap();

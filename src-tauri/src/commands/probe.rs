@@ -38,9 +38,7 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let size = std::fs::metadata(&path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
     let media_type = detect_media_type(path.clone())?;
 
@@ -57,17 +55,15 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
                 codec_name: info.codec_name,
             })
         }
-        MediaType::Pdf => {
-            Ok(FileInfo {
-                path,
-                file_name,
-                size,
-                media_type: MediaType::Pdf,
-                duration: None,
-                resolution: None,
-                codec_name: None,
-            })
-        }
+        MediaType::Pdf => Ok(FileInfo {
+            path,
+            file_name,
+            size,
+            media_type: MediaType::Pdf,
+            duration: None,
+            resolution: None,
+            codec_name: None,
+        }),
         MediaType::Image => {
             let ext = Path::new(&path)
                 .extension()
@@ -81,11 +77,10 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
                 info.and_then(|i| i.resolution)
             } else {
                 let path_clone = path.clone();
-                let dims = tokio::task::spawn_blocking(move || {
-                    image::image_dimensions(&path_clone).ok()
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                let dims =
+                    tokio::task::spawn_blocking(move || image::image_dimensions(&path_clone).ok())
+                        .await
+                        .map_err(|e| e.to_string())?;
                 dims.map(|(w, h)| crate::types::Resolution {
                     width: w,
                     height: h,
@@ -111,30 +106,54 @@ mod tests {
 
     #[test]
     fn detect_video_types() {
-        for ext in &["mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts"] {
+        for ext in &[
+            "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts",
+        ] {
             let result = detect_media_type(format!("file.{}", ext));
-            assert!(matches!(result, Ok(MediaType::Video)), "failed for .{}", ext);
+            assert!(
+                matches!(result, Ok(MediaType::Video)),
+                "failed for .{}",
+                ext
+            );
         }
     }
 
     #[test]
     fn detect_image_types() {
-        for ext in &["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif"] {
+        for ext in &[
+            "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+        ] {
             let result = detect_media_type(format!("file.{}", ext));
-            assert!(matches!(result, Ok(MediaType::Image)), "failed for .{}", ext);
+            assert!(
+                matches!(result, Ok(MediaType::Image)),
+                "failed for .{}",
+                ext
+            );
         }
     }
 
     #[test]
     fn detect_pdf() {
-        assert!(matches!(detect_media_type("doc.pdf".into()), Ok(MediaType::Pdf)));
+        assert!(matches!(
+            detect_media_type("doc.pdf".into()),
+            Ok(MediaType::Pdf)
+        ));
     }
 
     #[test]
     fn case_insensitive() {
-        assert!(matches!(detect_media_type("file.MP4".into()), Ok(MediaType::Video)));
-        assert!(matches!(detect_media_type("file.Png".into()), Ok(MediaType::Image)));
-        assert!(matches!(detect_media_type("file.PDF".into()), Ok(MediaType::Pdf)));
+        assert!(matches!(
+            detect_media_type("file.MP4".into()),
+            Ok(MediaType::Video)
+        ));
+        assert!(matches!(
+            detect_media_type("file.Png".into()),
+            Ok(MediaType::Image)
+        ));
+        assert!(matches!(
+            detect_media_type("file.PDF".into()),
+            Ok(MediaType::Pdf)
+        ));
     }
 
     #[test]

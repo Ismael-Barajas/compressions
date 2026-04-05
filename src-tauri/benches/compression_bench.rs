@@ -1,7 +1,7 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
-use compressions_lib::compression::progress::parse_progress_line;
 use compressions_lib::compression::image::compress;
+use compressions_lib::compression::progress::parse_progress_line;
 use compressions_lib::types::{ImageFormat, ImageOptions};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn bench_parse_progress(c: &mut Criterion) {
     let line = "frame=  120 fps=30 time=00:00:04.00 speed=1.5x";
@@ -38,7 +38,8 @@ fn bench_jpeg_1080p(c: &mut Criterion) {
                 input.to_str().unwrap(),
                 output.to_str().unwrap(),
                 &opts(ImageFormat::Jpeg, 80),
-            ).unwrap()
+            )
+            .unwrap()
         })
     });
 }
@@ -55,7 +56,8 @@ fn bench_png_1080p(c: &mut Criterion) {
                 input.to_str().unwrap(),
                 output.to_str().unwrap(),
                 &opts(ImageFormat::Png, 80),
-            ).unwrap()
+            )
+            .unwrap()
         })
     });
 }
@@ -72,7 +74,8 @@ fn bench_webp_1080p(c: &mut Criterion) {
                 input.to_str().unwrap(),
                 output.to_str().unwrap(),
                 &opts(ImageFormat::WebP, 75),
-            ).unwrap()
+            )
+            .unwrap()
         })
     });
 }
@@ -92,7 +95,8 @@ fn bench_jpeg_scaling(c: &mut Criterion) {
                     input.to_str().unwrap(),
                     output.to_str().unwrap(),
                     &opts(ImageFormat::Jpeg, 80),
-                ).unwrap()
+                )
+                .unwrap()
             })
         });
     }

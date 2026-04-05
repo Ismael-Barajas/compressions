@@ -40,18 +40,17 @@ pub fn init_tracing(log_dir: PathBuf) -> WorkerGuard {
                 .with_ansi(false)
                 .with_target(true),
         )
-        .with(
-            fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_target(true),
-        )
+        .with(fmt::layer().with_writer(std::io::stderr).with_target(true))
         .init();
 
     guard
 }
 
 /// Read log entries from the current log file, returning the most recent `max_lines`.
-pub fn read_log_entries(app: &AppHandle, max_lines: Option<usize>) -> Result<Vec<LogEntry>, String> {
+pub fn read_log_entries(
+    app: &AppHandle,
+    max_lines: Option<usize>,
+) -> Result<Vec<LogEntry>, String> {
     let dir = log_dir(app)?;
 
     // Find all log files and sort them (most recent last)
@@ -113,9 +112,19 @@ fn parse_log_line(line: &str) -> Option<LogEntry> {
     for l in &levels {
         if let Some(pos) = rest.find(l) {
             // Verify it's surrounded by whitespace
-            let before_ok = pos == 0 || rest.as_bytes().get(pos - 1).map(|b| b.is_ascii_whitespace()).unwrap_or(false);
+            let before_ok = pos == 0
+                || rest
+                    .as_bytes()
+                    .get(pos - 1)
+                    .map(|b| b.is_ascii_whitespace())
+                    .unwrap_or(false);
             let after_pos = pos + l.len();
-            let after_ok = after_pos >= rest.len() || rest.as_bytes().get(after_pos).map(|b| b.is_ascii_whitespace() || *b == b':').unwrap_or(true);
+            let after_ok = after_pos >= rest.len()
+                || rest
+                    .as_bytes()
+                    .get(after_pos)
+                    .map(|b| b.is_ascii_whitespace() || *b == b':')
+                    .unwrap_or(true);
             if before_ok && after_ok {
                 level_start = Some(pos);
                 level_str = l;
@@ -172,7 +181,10 @@ mod tests {
         let line = "2026-04-04T12:00:00.000Z  INFO compressions_lib::commands::video: Starting compression input=\"/path\"";
         let entry = parse_log_line(line).unwrap();
         assert_eq!(entry.level, "INFO");
-        assert_eq!(entry.target.as_deref(), Some("compressions_lib::commands::video"));
+        assert_eq!(
+            entry.target.as_deref(),
+            Some("compressions_lib::commands::video")
+        );
         assert!(entry.message.contains("Starting compression"));
         assert!(entry.timestamp.contains("2026"));
     }

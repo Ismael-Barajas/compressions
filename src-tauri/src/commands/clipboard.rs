@@ -44,7 +44,9 @@ pub fn read_clipboard_files() -> Result<Vec<String>, String> {
 pub fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
-    let image = clipboard.get_image().map_err(|_| "No image in clipboard".to_string())?;
+    let image = clipboard
+        .get_image()
+        .map_err(|_| "No image in clipboard".to_string())?;
 
     // Build temp dir path inside app's temp directory
     let temp_dir = app

@@ -67,8 +67,8 @@ fn encode_jpeg(
         .map_err(|_| "Failed to get JPEG data".to_string())?;
 
     if preserve_metadata {
-        let input_bytes =
-            std::fs::read(input).map_err(|e| format!("Failed to read input for metadata: {}", e))?;
+        let input_bytes = std::fs::read(input)
+            .map_err(|e| format!("Failed to read input for metadata: {}", e))?;
 
         // Try to copy EXIF (APP1) from input into the encoded output
         if let (Ok(src), Ok(mut dst)) = (
@@ -120,8 +120,8 @@ fn encode_webp(
     let data: Vec<u8> = encoded.to_vec();
 
     if preserve_metadata {
-        let input_bytes =
-            std::fs::read(input).map_err(|e| format!("Failed to read input for metadata: {}", e))?;
+        let input_bytes = std::fs::read(input)
+            .map_err(|e| format!("Failed to read input for metadata: {}", e))?;
 
         if let (Ok(src), Ok(mut dst)) = (
             img_parts::webp::WebP::from_bytes(input_bytes.into()),
@@ -169,8 +169,7 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
     use gif::{DecodeOptions, Encoder, Frame, Repeat};
     use std::fs::File;
 
-    let in_file =
-        File::open(input).map_err(|e| format!("Failed to open GIF input: {}", e))?;
+    let in_file = File::open(input).map_err(|e| format!("Failed to open GIF input: {}", e))?;
 
     // Decode to RGBA so we can re-quantize with imagequant
     let mut decode_opts = DecodeOptions::new();
@@ -224,7 +223,8 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to set GIF repeat: {}", e))?;
 
     let mut liq = imagequant::new();
-    liq.set_quality(0, 100).map_err(|e| format!("imagequant quality error: {}", e))?;
+    liq.set_quality(0, 100)
+        .map_err(|e| format!("imagequant quality error: {}", e))?;
 
     for raw in &raw_frames {
         let fw = raw.width as usize;
@@ -232,8 +232,15 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
         let pixel_count = fw * fh;
 
         // Convert RGBA bytes to imagequant RGBA pixels
-        let pixels: Vec<imagequant::RGBA> = raw.rgba.chunks_exact(4)
-            .map(|c| imagequant::RGBA { r: c[0], g: c[1], b: c[2], a: c[3] })
+        let pixels: Vec<imagequant::RGBA> = raw
+            .rgba
+            .chunks_exact(4)
+            .map(|c| imagequant::RGBA {
+                r: c[0],
+                g: c[1],
+                b: c[2],
+                a: c[3],
+            })
             .collect();
 
         if pixels.len() != pixel_count {
@@ -241,15 +248,19 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
             continue;
         }
 
-        let mut img = liq.new_image_borrowed(&pixels, fw, fh, 0.0)
+        let mut img = liq
+            .new_image_borrowed(&pixels, fw, fh, 0.0)
             .map_err(|e| format!("imagequant image error: {}", e))?;
 
-        let mut res = liq.quantize(&mut img)
+        let mut res = liq
+            .quantize(&mut img)
             .map_err(|e| format!("imagequant quantize error: {}", e))?;
 
-        res.set_dithering_level(1.0).map_err(|e| format!("imagequant dither error: {}", e))?;
+        res.set_dithering_level(1.0)
+            .map_err(|e| format!("imagequant dither error: {}", e))?;
 
-        let (palette_data, indexed_pixels) = res.remapped(&mut img)
+        let (palette_data, indexed_pixels) = res
+            .remapped(&mut img)
             .map_err(|e| format!("imagequant remap error: {}", e))?;
 
         // Build palette bytes (RGB triples)
@@ -311,7 +322,12 @@ mod tests {
         let output = dir.path().join("output.jpg");
         create_test_image(input.to_str().unwrap(), 100, 100);
 
-        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Jpeg)).unwrap();
+        compress(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::Jpeg),
+        )
+        .unwrap();
 
         let data = std::fs::read(&output).unwrap();
         assert!(data.len() > 0);
@@ -326,7 +342,12 @@ mod tests {
         let output = dir.path().join("output.png");
         create_test_image(input.to_str().unwrap(), 100, 100);
 
-        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Png)).unwrap();
+        compress(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::Png),
+        )
+        .unwrap();
 
         let data = std::fs::read(&output).unwrap();
         // PNG magic bytes
@@ -340,7 +361,12 @@ mod tests {
         let output = dir.path().join("output.webp");
         create_test_image(input.to_str().unwrap(), 100, 100);
 
-        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::WebP)).unwrap();
+        compress(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::WebP),
+        )
+        .unwrap();
 
         let data = std::fs::read(&output).unwrap();
         // RIFF....WEBP magic
@@ -355,7 +381,12 @@ mod tests {
         let output = dir.path().join("output.avif");
         create_test_image(input.to_str().unwrap(), 64, 64);
 
-        compress(input.to_str().unwrap(), output.to_str().unwrap(), &default_opts(ImageFormat::Avif)).unwrap();
+        compress(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::Avif),
+        )
+        .unwrap();
 
         let data = std::fs::read(&output).unwrap();
         assert!(data.len() > 0);
@@ -371,7 +402,10 @@ mod tests {
         let opts = ImageOptions {
             format: ImageFormat::Jpeg,
             quality: 80,
-            resize: Some(Resolution { width: 50, height: 50 }),
+            resize: Some(Resolution {
+                width: 50,
+                height: 50,
+            }),
             strip_metadata: true,
         };
 
@@ -406,7 +440,11 @@ mod tests {
     fn missing_input_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("output.jpg");
-        let result = compress("/nonexistent/file.png", output.to_str().unwrap(), &default_opts(ImageFormat::Jpeg));
+        let result = compress(
+            "/nonexistent/file.png",
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::Jpeg),
+        );
         assert!(result.is_err());
     }
 }

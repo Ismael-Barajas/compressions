@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use tauri::{AppHandle, State, ipc::Channel};
-use tauri_plugin_shell::ShellExt;
+use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::compression::progress::parse_progress_line;
@@ -31,9 +31,7 @@ pub async fn compress_video(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
 
     // Ensure the output directory exists (needed for subfolder export mode)
     if let Some(parent) = std::path::Path::new(&output).parent() {
@@ -56,7 +54,9 @@ pub async fn compress_video(
     // Store child handle and output path for cancellation + cleanup
     {
         let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state.active_jobs.insert(job_id.clone(), (child, output.clone()));
+        app_state
+            .active_jobs
+            .insert(job_id.clone(), (child, output.clone()));
     }
 
     let _ = on_progress.send(ProgressEvent::Started {
@@ -94,9 +94,7 @@ pub async fn compress_video(
                 }
 
                 let duration_ms = start.elapsed().as_millis() as u64;
-                let output_size = std::fs::metadata(&output)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
+                let output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
 
                 let success = status.code == Some(0);
                 let result = CompressionResult {
@@ -165,13 +163,12 @@ pub async fn compress_videos_batch(
 }
 
 #[tauri::command]
-pub fn cancel_compression(
-    state: State<'_, Mutex<AppState>>,
-    job_id: String,
-) -> Result<(), String> {
+pub fn cancel_compression(state: State<'_, Mutex<AppState>>, job_id: String) -> Result<(), String> {
     let mut app_state = state.lock().map_err(|e| e.to_string())?;
     if let Some((child, _)) = app_state.active_jobs.remove(&job_id) {
-        child.kill().map_err(|e| format!("Failed to kill FFmpeg process: {}", e))?;
+        child
+            .kill()
+            .map_err(|e| format!("Failed to kill FFmpeg process: {}", e))?;
         // Partial file cleanup happens in the Terminated event handler once the process exits
     }
     Ok(())

@@ -7,8 +7,8 @@ mod presets;
 mod state;
 pub mod types;
 
-use std::sync::Mutex;
 use state::AppState;
+use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
