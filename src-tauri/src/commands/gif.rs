@@ -11,11 +11,11 @@ use crate::ffmpeg::args::{build_gif_encode_args, build_gif_palette_args};
 use crate::ffmpeg::probe::probe_video_duration;
 use crate::history::storage as history;
 use crate::state::AppState;
-use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, GifConversionOptions, HistoryEntry, ProgressEvent,
     ProgressPayload,
 };
+use crate::utils::resolve_output_conflict;
 
 #[tauri::command]
 pub async fn convert_video_to_gif(

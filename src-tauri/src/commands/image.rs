@@ -10,10 +10,10 @@ use uuid::Uuid;
 
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
-use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
 };
+use crate::utils::resolve_output_conflict;
 
 fn is_avif_input(path: &str) -> bool {
     Path::new(path)

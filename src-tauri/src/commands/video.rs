@@ -11,14 +11,17 @@ use crate::ffmpeg::args::build_video_args;
 use crate::ffmpeg::probe::probe_video_duration;
 use crate::history::storage as history;
 use crate::state::AppState;
-use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload, VideoCodec,
     VideoOptions,
 };
+use crate::utils::resolve_output_conflict;
 
 /// Resolve which HW encoder (if any) to use for the given codec.
-fn resolve_hw_encoder(codec: &VideoCodec, hw_encoders: &std::collections::HashSet<String>) -> Option<String> {
+fn resolve_hw_encoder(
+    codec: &VideoCodec,
+    hw_encoders: &std::collections::HashSet<String>,
+) -> Option<String> {
     let name = match codec {
         VideoCodec::H264 => {
             if hw_encoders.contains("h264_videotoolbox") {
@@ -159,7 +162,16 @@ pub async fn compress_video(
     }
 
     let args = build_video_args(&input, &output, &opts);
-    let (exit_code, duration_ms) = run_ffmpeg(&app, &state, &job_id, &file_name, &args, total_duration, &on_progress).await?;
+    let (exit_code, duration_ms) = run_ffmpeg(
+        &app,
+        &state,
+        &job_id,
+        &file_name,
+        &args,
+        total_duration,
+        &on_progress,
+    )
+    .await?;
 
     // HW encoder failed — retry with software
     let (exit_code, duration_ms) = if exit_code != Some(0) && used_hw {
@@ -167,7 +179,16 @@ pub async fn compress_video(
         let _ = std::fs::remove_file(&output);
         opts.hw_encoder = None;
         let sw_args = build_video_args(&input, &output, &opts);
-        run_ffmpeg(&app, &state, &job_id, &file_name, &sw_args, total_duration, &on_progress).await?
+        run_ffmpeg(
+            &app,
+            &state,
+            &job_id,
+            &file_name,
+            &sw_args,
+            total_duration,
+            &on_progress,
+        )
+        .await?
     } else {
         (exit_code, duration_ms)
     };

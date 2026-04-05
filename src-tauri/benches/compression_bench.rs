@@ -119,8 +119,7 @@ fn bench_avif_speed_comparison(c: &mut Criterion) {
     for speed in [6, 7, 8] {
         group.bench_with_input(BenchmarkId::new("speed", speed), &speed, |b, &spd| {
             b.iter(|| {
-                let img_ref =
-                    ravif::Img::new(&pixels[..], width as usize, height as usize);
+                let img_ref = ravif::Img::new(&pixels[..], width as usize, height as usize);
                 ravif::Encoder::new()
                     .with_quality(80.0)
                     .with_speed(black_box(spd))

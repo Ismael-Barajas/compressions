@@ -11,11 +11,11 @@ use crate::ffmpeg::args::build_audio_extraction_args;
 use crate::ffmpeg::probe::probe_video_duration;
 use crate::history::storage as history;
 use crate::state::AppState;
-use crate::utils::resolve_output_conflict;
 use crate::types::{
     AudioExtractionOptions, BatchEntry, CompressionResult, HistoryEntry, ProgressEvent,
     ProgressPayload,
 };
+use crate::utils::resolve_output_conflict;
 
 #[tauri::command]
 pub async fn extract_audio(

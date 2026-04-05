@@ -12,10 +12,7 @@ pub fn resolve_output_conflict(output: &str) -> String {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let parent = path.parent().unwrap_or(Path::new("."));
 
     for i in 2..=999 {

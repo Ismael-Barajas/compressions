@@ -7,10 +7,10 @@ use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::history::storage as history;
-use crate::utils::resolve_output_conflict;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
 };
+use crate::utils::resolve_output_conflict;
 
 /// Resolve the path to the bundled Ghostscript resource directory.
 /// In dev mode, it's at `src-tauri/binaries/gs-res/`.
