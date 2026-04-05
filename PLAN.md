@@ -37,7 +37,76 @@
 | 10 — UX Enhancements       | ✅ Complete | Add-during-compress, clipboard paste                        |
 | 11 — Persistence           | ✅ Complete | History panel, log viewer                                   |
 | **12 — Testing**           | ✅ Complete | Unit tests, integration tests, perf benchmarks, CI          |
+| **O — Optimization**       | 🔲 Planned  | Benchmarks, opt-level, FFmpeg presets, AVIF tuning, HW accel |
 | 13 — Final Polish          | 🔲 Planned  | Cross-cutting integration, keyboard shortcuts               |
+
+---
+
+## Phase O — Performance Optimization
+
+> Goal: Measurably improve compression speed across all platforms using real benchmark data, without overcomplicating the codebase.
+
+### O-1: Expand Benchmarks (baseline first)
+
+- [ ] Add AVIF 1080p benchmark to `src-tauri/benches/compression_bench.rs`
+- [ ] Add AVIF speed comparison group (speed 6 vs 7 vs 8)
+- [ ] Add GIF re-quantization benchmark
+- [ ] Run full suite and save baseline: `cargo bench -- --save-baseline before-optimization`
+
+### O-2: Release Profile — `opt-level "s"` → `3`
+
+- [ ] Change `opt-level = "s"` to `opt-level = 3` in `src-tauri/Cargo.toml`
+- [ ] Run benchmarks, compare against baseline (expected: 10-30% faster images)
+
+**Why:** All native encoders (mozjpeg, oxipng, ravif, webp, imagequant) currently compile for binary size, not speed. `opt-level = 3` enables auto-vectorization and SIMD. Binary grows ~3MB vs 80MB+ sidecar — negligible.
+
+### O-3: FFmpeg Preset Flags
+
+- [ ] Add `-preset fast` for libx264 in `src-tauri/src/ffmpeg/args.rs`
+- [ ] Add `-preset fast` for libx265
+- [ ] Add `-preset 7` for libsvtav1 (scale 0-13, lower=slower; default 10 is very slow)
+- [ ] Verify with test video (expected: 40-60% faster video encoding)
+
+**Why:** Currently no preset flag is passed. libx264/x265 default to "medium", SVT-AV1 to preset 10. Quality impact at same CRF: <0.5 dB PSNR — visually imperceptible.
+
+### O-4: AVIF Encoder Tuning
+
+- [ ] Change ravif speed from 6 → 7 in `src-tauri/src/compression/image.rs`
+- [ ] Add `.with_num_threads(Some(4))` to prevent rayon pool contention in batches
+- [ ] Run AVIF benchmarks (expected: 40-60% faster per-image)
+
+**Why:** Speed 7 is ~40-60% faster with minimal quality loss. Thread cap prevents multiple concurrent AVIF encodes from each claiming all cores.
+
+### O-5: Image Batch Concurrency Limit
+
+- [ ] Add `tokio::sync::Semaphore` in `compress_images_batch` (`src-tauri/src/commands/image.rs`)
+- [ ] Cap at `std::thread::available_parallelism().min(8)` — no new crate needed
+- [ ] Test with 50+ image batch (expected: 20-50% faster, prevents OOM)
+
+**Why:** Currently 500 images spawn 500 simultaneous tasks → memory pressure + thread thrashing. Semaphore ensures CPU saturation without overload.
+
+### O-6: Video Hardware Acceleration (VideoToolbox / NVENC)
+
+- [ ] Add `detect_hw_encoders()` in `src-tauri/src/ffmpeg/probe.rs` — runs `ffmpeg -encoders` at startup
+- [ ] Cache results in `AppState` (`src-tauri/src/state.rs`)
+- [ ] In `build_video_args`, remap H264→`h264_videotoolbox` / H265→`hevc_videotoolbox` on macOS when available
+- [ ] Map CRF to VideoToolbox `-q:v` quality parameter
+- [ ] Add fallback: if HW encode fails, retry with software encoder
+- [ ] No change for AV1 (no good HW encoder available)
+- [ ] Test on Apple Silicon (expected: 3-10x faster H264/H265)
+
+**Why:** Bundled FFmpeg already has `h264_videotoolbox` and `hevc_videotoolbox` compiled in but never used. Auto-detect with graceful fallback — no UI changes needed.
+
+### Optimization Summary
+
+| Sub-phase | Target | Expected Gain | Complexity |
+|-----------|--------|---------------|------------|
+| O-1 | Benchmarks | Baseline data | Low (~60 lines) |
+| O-2 | opt-level | 10-30% images | Trivial (1 line) |
+| O-3 | FFmpeg presets | 40-60% video | Low (~15 lines) |
+| O-4 | AVIF tuning | 40-60% AVIF | Low (2 lines) |
+| O-5 | Batch semaphore | 20-50% batches | Medium (~30 lines) |
+| O-6 | HW acceleration | 3-10x video | High (~150 lines) |
 
 ---
 
