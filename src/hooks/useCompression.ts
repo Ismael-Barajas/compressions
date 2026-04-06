@@ -136,7 +136,7 @@ export function useCompression() {
               channel.onmessage = (event: ProgressEvent) => {
                 switch (event.event) {
                   case "started": {
-                    const matchedFile = imageFiles.find((f) => f.name === event.data.fileName);
+                    const matchedFile = imageFiles.find((f) => f.path === event.data.inputPath);
                     if (matchedFile) {
                       setFileStatus(matchedFile.id, "processing", event.data.jobId);
                     }

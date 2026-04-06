@@ -105,7 +105,7 @@ export function AppShell() {
 
     const cleanup = setupDragDrop();
     return () => {
-      cleanup.then((fn) => fn?.());
+      cleanup.then((fn) => fn?.()).catch(() => {});
     };
   }, [processFilePaths]);
 

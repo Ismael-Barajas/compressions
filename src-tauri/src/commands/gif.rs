@@ -16,6 +16,7 @@ use crate::types::{
     ProgressPayload,
 };
 use crate::utils::resolve_output_conflict;
+use crate::validate::validate_gif_options;
 
 #[tauri::command]
 pub async fn convert_video_to_gif(
@@ -26,6 +27,7 @@ pub async fn convert_video_to_gif(
     options: GifConversionOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
+    validate_gif_options(&options)?;
     let job_id = Uuid::new_v4().to_string();
     tracing::info!(input = %input, output = %output, "Starting GIF conversion");
     let file_name = std::path::Path::new(&input)
@@ -99,6 +101,7 @@ pub async fn convert_video_to_gif(
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
         file_name: file_name.clone(),
+        input_path: input.clone(),
     });
 
     let start = Instant::now();
@@ -153,7 +156,9 @@ pub async fn convert_video_to_gif(
                 if success {
                     let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
                 } else {
-                    let _ = std::fs::remove_file(&output);
+                    if let Err(e) = std::fs::remove_file(&output) {
+                        tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
+                    }
                     let _ = on_progress.send(ProgressEvent::Error {
                         job_id: job_id.clone(),
                         message: result.error.clone().unwrap_or_default(),
@@ -165,7 +170,9 @@ pub async fn convert_video_to_gif(
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "GIF conversion failed");
                 }
-                let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "gif"));
+                if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "gif")) {
+                    tracing::warn!(error = %e, "Failed to save history entry");
+                }
                 return Ok(result);
             }
             _ => {}

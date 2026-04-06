@@ -27,6 +27,7 @@ export function Header() {
           className="rounded-md p-1.5 transition-colors hover:opacity-80"
           style={{ backgroundColor: "var(--bg-tertiary)" }}
           title="Application logs"
+          aria-label="Application logs"
         >
           <Terminal size={16} style={{ color: "var(--text-secondary)" }} />
         </button>
@@ -35,6 +36,7 @@ export function Header() {
           className="rounded-md p-1.5 transition-colors hover:opacity-80"
           style={{ backgroundColor: "var(--bg-tertiary)" }}
           title="Compression history"
+          aria-label="Compression history"
         >
           <Clock size={16} style={{ color: "var(--text-secondary)" }} />
         </button>
@@ -43,6 +45,7 @@ export function Header() {
           className="rounded-md p-1.5 transition-colors hover:opacity-80"
           style={{ backgroundColor: "var(--bg-tertiary)" }}
           title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+          aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
         >
           {theme === "light" ? (
             <Moon size={16} style={{ color: "var(--text-secondary)" }} />

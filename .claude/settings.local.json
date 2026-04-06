@@ -26,7 +26,9 @@
       "Bash(/Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/binaries/ffmpeg-aarch64-apple-darwin -encoders)",
       "Bash(./src-tauri/binaries/ffmpeg-aarch64-apple-darwin -encoders)",
       "Bash(cargo doc:*)",
-      "Bash(cargo bench:*)"
+      "Bash(cargo bench:*)",
+      "Bash(grep -n \"normalize\\\\|canonicalize\" /Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/src/commands/*.rs)",
+      "Bash(grep -v \"^0$\")"
     ]
   }
 }

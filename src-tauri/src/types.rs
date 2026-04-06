@@ -163,6 +163,7 @@ pub enum ProgressEvent {
     Started {
         job_id: String,
         file_name: String,
+        input_path: String,
     },
     Progress(ProgressPayload),
     Completed(CompressionResult),

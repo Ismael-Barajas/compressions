@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Capability for the main window","local":true,"windows":["main"],"permissions":["core:default","shell:allow-spawn","shell:allow-kill","shell:allow-open","dialog:allow-open","dialog:allow-save","dialog:default","fs:allow-read","fs:allow-write","fs:default"]}}
+{"default":{"identifier":"default","description":"Capability for the main window","local":true,"windows":["main"],"permissions":["core:default","shell:allow-spawn","shell:allow-kill","dialog:allow-open","dialog:allow-save","dialog:default"]}}

@@ -124,7 +124,7 @@ export interface LogEntry {
 }
 
 export type ProgressEvent =
-  | { event: "started"; data: { jobId: string; fileName: string } }
+  | { event: "started"; data: { jobId: string; fileName: string; inputPath: string } }
   | { event: "progress"; data: ProgressPayload }
   | { event: "completed"; data: CompressionResult }
   | { event: "error"; data: { jobId: string; message: string } };

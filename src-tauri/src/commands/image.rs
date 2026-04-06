@@ -92,6 +92,7 @@ pub async fn compress_image(
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
         file_name: file_name.clone(),
+        input_path: input.clone(),
     });
 
     let start = Instant::now();

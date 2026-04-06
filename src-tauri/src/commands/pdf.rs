@@ -11,6 +11,7 @@ use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
 };
 use crate::utils::resolve_output_conflict;
+use crate::validate::validate_pdf_options;
 
 /// Resolve the path to the bundled Ghostscript resource directory.
 /// In dev mode, it's at `src-tauri/binaries/gs-res/`.
@@ -89,6 +90,7 @@ pub async fn compress_pdf(
     options: PdfOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
+    validate_pdf_options(&options)?;
     let job_id = Uuid::new_v4().to_string();
     tracing::info!(input = %input, quality = ?options.quality, "Starting PDF compression");
     let file_name = std::path::Path::new(&input)
@@ -120,6 +122,7 @@ pub async fn compress_pdf(
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
         file_name: file_name.clone(),
+        input_path: input.clone(),
     });
 
     let start = Instant::now();
@@ -157,7 +160,9 @@ pub async fn compress_pdf(
                 if success {
                     let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
                 } else {
-                    let _ = std::fs::remove_file(&output);
+                    if let Err(e) = std::fs::remove_file(&output) {
+                        tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
+                    }
                     let _ = on_progress.send(ProgressEvent::Error {
                         job_id: job_id.clone(),
                         message: result.error.clone().unwrap_or_default(),
@@ -169,7 +174,9 @@ pub async fn compress_pdf(
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "PDF compression failed");
                 }
-                let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "pdf"));
+                if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "pdf")) {
+                    tracing::warn!(error = %e, "Failed to save history entry");
+                }
                 return Ok(result);
             }
             _ => {}

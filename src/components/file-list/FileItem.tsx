@@ -123,6 +123,7 @@ export function FileItem({ file }: FileItemProps) {
               onClick={() => cancelFile(file.id)}
               className="rounded p-1 transition-colors hover:opacity-70"
               title="Cancel compression"
+              aria-label="Cancel compression"
             >
               <StopCircle size={16} style={{ color: "var(--error)" }} />
             </button>
@@ -132,6 +133,7 @@ export function FileItem({ file }: FileItemProps) {
                 onClick={() => retryFile(file.id)}
                 className="rounded p-1 transition-colors hover:opacity-70"
                 title="Retry compression"
+                aria-label="Retry compression"
               >
                 <RotateCcw size={16} style={{ color: "var(--accent)" }} />
               </button>
@@ -139,6 +141,7 @@ export function FileItem({ file }: FileItemProps) {
                 onClick={() => removeFile(file.id)}
                 className="rounded p-1 transition-colors hover:opacity-70"
                 title="Remove file"
+                aria-label="Remove file"
               >
                 <X size={16} style={{ color: "var(--text-muted)" }} />
               </button>
@@ -149,6 +152,7 @@ export function FileItem({ file }: FileItemProps) {
                 onClick={() => removeFile(file.id)}
                 className="rounded p-1 transition-colors hover:opacity-70"
                 title="Remove file"
+                aria-label="Remove file"
               >
                 <X size={16} style={{ color: "var(--text-muted)" }} />
               </button>

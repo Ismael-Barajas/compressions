@@ -65,6 +65,9 @@ export function HistoryPanel() {
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Compression History"
         className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border shadow-xl"
         style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
       >

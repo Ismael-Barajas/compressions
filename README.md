@@ -4,19 +4,42 @@ A cross-platform desktop app for compressing videos, images, and PDFs. Built wit
 
 ## Features
 
-- Drag-and-drop file and folder input
+### Compression
+
 - **Video compression** — H.264, H.265/HEVC, AV1 via FFmpeg; control CRF, resolution, frame rate, audio codec/bitrate
 - **Image compression** — JPEG (MozJPEG), PNG (oxipng), WebP, AVIF, animated GIF; resize, strip metadata
 - **PDF compression** — Ghostscript-powered with Screen / Ebook / Printer / Prepress quality presets and DPI override
 - **Audio extraction** — Extract MP3, AAC, FLAC, Opus, or WAV from any video via right-click context menu
 - **Video-to-GIF conversion** — Two-pass palette FFmpeg approach with FPS, width, color count, and dither controls
-- Built-in presets (Web Optimized, High Quality, Small File Size, Social Media)
+
+### Performance
+
+- **Hardware-accelerated video encoding** — Auto-detects VideoToolbox (macOS) and NVENC (Windows/Linux) with automatic software fallback
+- **Optimized FFmpeg presets** — `-preset fast` for H.264/H.265, `-preset 7` for SVT-AV1
+- **Parallel image processing** — Concurrent batch encoding with semaphore-based concurrency limiting
+- **Tuned AVIF encoder** — ravif speed 7 with thread capping to prevent contention in batches
+
+### Workflow
+
+- Drag-and-drop file and folder input
+- **Clipboard paste** — `Ctrl/Cmd+V` to add files from clipboard or paste screenshots directly
+- **Add files during compression** — queue new files while a batch is processing
+- Built-in presets (Web Optimized, High Quality, Small File Size, Social Media) with custom preset save/delete
 - Batch processing with per-file progress bars (indeterminate for PDF)
+- **Per-file cancellation** during compression
 - Output modes: same folder, subfolder, or custom directory
 - Customizable output filename templates (`{name}`, `{date}`, `{time}`)
+- **Output filename conflict resolution** — automatic `_2`, `_3` suffixes to prevent overwrites
 - Automatic "already optimized" detection — original kept if output would be larger
 - Before/after file size comparison
+- **Keyboard shortcuts** — `Space` to start, `Escape` to cancel, `Ctrl/Cmd+V` to paste
 - Dark/light theme
+
+### Observability
+
+- **Compression history** — Searchable log of all past compressions with size savings and duration
+- **Application log viewer** — Filterable by level (ERROR, WARN, INFO, DEBUG, TRACE) with search
+- **Input validation** — All compression parameters validated server-side before processing
 
 ## Prerequisites
 

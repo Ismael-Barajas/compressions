@@ -16,6 +16,7 @@ use crate::types::{
     VideoOptions,
 };
 use crate::utils::resolve_output_conflict;
+use crate::validate::validate_video_options;
 
 /// Resolve which HW encoder (if any) to use for the given codec.
 fn resolve_hw_encoder(
@@ -121,6 +122,7 @@ pub async fn compress_video(
     options: VideoOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
+    validate_video_options(&options)?;
     let job_id = Uuid::new_v4().to_string();
     tracing::info!(input = %input, output = %output, "Starting video compression");
     let file_name = std::path::Path::new(&input)
@@ -150,6 +152,7 @@ pub async fn compress_video(
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
         file_name: file_name.clone(),
+        input_path: input.clone(),
     });
 
     // Try HW encoder first, fall back to software on failure
@@ -176,7 +179,9 @@ pub async fn compress_video(
     // HW encoder failed — retry with software
     let (exit_code, duration_ms) = if exit_code != Some(0) && used_hw {
         tracing::warn!("HW encoder failed, falling back to software");
-        let _ = std::fs::remove_file(&output);
+        if let Err(e) = std::fs::remove_file(&output) {
+            tracing::warn!(path = %output, error = %e, "Failed to remove partial HW output");
+        }
         opts.hw_encoder = None;
         let sw_args = build_video_args(&input, &output, &opts);
         run_ffmpeg(
@@ -214,14 +219,18 @@ pub async fn compress_video(
         let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
         tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "Video compression completed");
     } else {
-        let _ = std::fs::remove_file(&output);
+        if let Err(e) = std::fs::remove_file(&output) {
+            tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
+        }
         let _ = on_progress.send(ProgressEvent::Error {
             job_id: job_id.clone(),
             message: result.error.clone().unwrap_or_default(),
         });
         tracing::warn!(input = %result.input_path, error = ?result.error, "Video compression failed");
     }
-    let _ = history::append_entry(&app, HistoryEntry::from_result(&result, "video"));
+    if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "video")) {
+        tracing::warn!(error = %e, "Failed to save history entry");
+    }
     Ok(result)
 }
 

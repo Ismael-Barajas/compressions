@@ -76,6 +76,9 @@ export function LogViewer() {
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Application Logs"
         className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border shadow-xl"
         style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
       >

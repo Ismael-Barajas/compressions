@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Header } from "./components/layout/Header";
 import { AppShell } from "./components/layout/AppShell";
+import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 import { useCompressionStore } from "./stores/compressionStore";
 import { getDefaultOutputDir } from "./lib/commands";
 
@@ -25,10 +26,12 @@ function App() {
   }, [setOutputDir]);
 
   return (
-    <div className="flex h-screen flex-col" style={{ backgroundColor: "var(--bg-primary)" }}>
-      <Header />
-      <AppShell />
-    </div>
+    <ErrorBoundary>
+      <div className="flex h-screen flex-col" style={{ backgroundColor: "var(--bg-primary)" }}>
+        <Header />
+        <AppShell />
+      </div>
+    </ErrorBoundary>
   );
 }
 
