@@ -1,23 +1,26 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::types::{
-    AudioExtractionOptions, GifConversionOptions, PdfOptions, VideoOptions,
-};
+use crate::types::{AudioExtractionOptions, GifConversionOptions, PdfOptions, VideoOptions};
 
-static BITRATE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[0-9]+[kKmMgG]?$").unwrap());
+static BITRATE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+[kKmMgG]?$").unwrap());
 
 fn validate_bitrate(value: &str, field: &str) -> Result<(), String> {
     if !BITRATE_RE.is_match(value) {
-        return Err(format!("Invalid {}: '{}' (expected e.g. 128k, 2M)", field, value));
+        return Err(format!(
+            "Invalid {}: '{}' (expected e.g. 128k, 2M)",
+            field, value
+        ));
     }
     Ok(())
 }
 
 fn validate_range(value: u32, min: u32, max: u32, field: &str) -> Result<(), String> {
     if value < min || value > max {
-        return Err(format!("{} must be between {} and {} (got {})", field, min, max, value));
+        return Err(format!(
+            "{} must be between {} and {} (got {})",
+            field, min, max, value
+        ));
     }
     Ok(())
 }
@@ -93,7 +96,10 @@ mod tests {
         let opts = VideoOptions {
             codec: VideoCodec::H264,
             crf: 23,
-            resolution: Some(Resolution { width: 1920, height: 1080 }),
+            resolution: Some(Resolution {
+                width: 1920,
+                height: 1080,
+            }),
             bitrate: Some("2M".into()),
             framerate: Some(30.0),
             audio_codec: AudioCodec::AAC,
@@ -108,7 +114,10 @@ mod tests {
         let opts = VideoOptions {
             codec: VideoCodec::H264,
             crf: 23,
-            resolution: Some(Resolution { width: 99999, height: 1080 }),
+            resolution: Some(Resolution {
+                width: 99999,
+                height: 1080,
+            }),
             bitrate: None,
             framerate: None,
             audio_codec: AudioCodec::None,
@@ -142,13 +151,19 @@ mod tests {
 
     #[test]
     fn valid_pdf_options() {
-        let opts = PdfOptions { quality: PdfQuality::Ebook, dpi: Some(150) };
+        let opts = PdfOptions {
+            quality: PdfQuality::Ebook,
+            dpi: Some(150),
+        };
         assert!(validate_pdf_options(&opts).is_ok());
     }
 
     #[test]
     fn rejects_extreme_dpi() {
-        let opts = PdfOptions { quality: PdfQuality::Ebook, dpi: Some(0) };
+        let opts = PdfOptions {
+            quality: PdfQuality::Ebook,
+            dpi: Some(0),
+        };
         assert!(validate_pdf_options(&opts).is_err());
     }
 }

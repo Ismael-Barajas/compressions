@@ -135,7 +135,9 @@ pub async fn extract_audio(
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "Audio extraction failed");
                 }
-                if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "audio")) {
+                if let Err(e) =
+                    history::append_entry(&app, HistoryEntry::from_result(&result, "audio"))
+                {
                     tracing::warn!(error = %e, "Failed to save history entry");
                 }
                 return Ok(result);

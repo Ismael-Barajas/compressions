@@ -28,7 +28,8 @@
       "Bash(cargo doc:*)",
       "Bash(cargo bench:*)",
       "Bash(grep -n \"normalize\\\\|canonicalize\" /Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/src/commands/*.rs)",
-      "Bash(grep -v \"^0$\")"
+      "Bash(grep -v \"^0$\")",
+      "WebSearch"
     ]
   }
 }

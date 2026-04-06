@@ -170,7 +170,9 @@ pub async fn convert_video_to_gif(
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "GIF conversion failed");
                 }
-                if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "gif")) {
+                if let Err(e) =
+                    history::append_entry(&app, HistoryEntry::from_result(&result, "gif"))
+                {
                     tracing::warn!(error = %e, "Failed to save history entry");
                 }
                 return Ok(result);

@@ -174,7 +174,9 @@ pub async fn compress_pdf(
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "PDF compression failed");
                 }
-                if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "pdf")) {
+                if let Err(e) =
+                    history::append_entry(&app, HistoryEntry::from_result(&result, "pdf"))
+                {
                     tracing::warn!(error = %e, "Failed to save history entry");
                 }
                 return Ok(result);
