@@ -46,11 +46,25 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         args.push("yuv420p".into());
     }
 
-    // Quality — HW encoders use -q:v (0-100), software uses CRF
+    // Quality — HW encoders use codec-specific rate control, software uses CRF
     if is_hw {
-        let q = ((51u16.saturating_sub(opts.crf.min(51) as u16)) * 100 / 51) as u8;
-        args.push("-q:v".into());
-        args.push(q.to_string());
+        let hw = opts.hw_encoder.as_deref().unwrap_or("");
+        if hw.contains("nvenc") {
+            // NVENC: constant quality VBR. -cq takes the same 0-51 scale as CRF.
+            args.push("-rc".into());
+            args.push("vbr".into());
+            args.push("-cq".into());
+            args.push(opts.crf.to_string());
+            args.push("-b:v".into());
+            args.push("0".into());
+            args.push("-preset".into());
+            args.push("p5".into());
+        } else {
+            // videotoolbox: -q:v on a 0-100 scale (higher = better)
+            let q = ((51u16.saturating_sub(opts.crf.min(51) as u16)) * 100 / 51) as u8;
+            args.push("-q:v".into());
+            args.push(q.to_string());
+        }
     } else {
         args.push("-crf".into());
         args.push(opts.crf.to_string());
