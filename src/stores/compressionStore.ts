@@ -36,10 +36,10 @@ const DEFAULT_AUDIO_OPTIONS: AudioExtractionOptions = {
 };
 
 const DEFAULT_GIF_OPTIONS: GifConversionOptions = {
-  fps: 15,
-  width: null,
-  maxColors: 256,
-  dither: "floyd_steinberg",
+  fps: 12,
+  width: 480,
+  maxColors: 128,
+  dither: "bayer",
 };
 
 const DEFAULT_PDF_OPTIONS: PdfOptions = {

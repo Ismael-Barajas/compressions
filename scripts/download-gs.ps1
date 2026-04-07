@@ -40,7 +40,7 @@ if (-not $SevenZip) {
 
 Write-Host "Extracting installer with 7-Zip..."
 if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
-& $SevenZip x "-o$TempDir" $TempInstaller | Out-Null
+& $SevenZip x -y "-o$TempDir" $TempInstaller
 
 # Find the binaries
 $GsExe = Get-ChildItem -Path $TempDir -Recurse -Filter "gswin64c.exe" | Select-Object -First 1
