@@ -70,62 +70,51 @@ const BUILTIN_PRESETS: PresetDef[] = [
   },
 ];
 
-export function PresetSelector() {
-  const files = useCompressionStore((s) => s.files);
+interface PresetSelectorProps {
+  mediaType: "video" | "image";
+}
+
+export function PresetSelector({ mediaType }: PresetSelectorProps) {
   const activePreset = useCompressionStore((s) => s.activePreset);
+  const applyPreset = useCompressionStore((s) => s.applyPreset);
   const setActivePreset = useCompressionStore((s) => s.setActivePreset);
-  const setVideoOptions = useCompressionStore((s) => s.setVideoOptions);
-  const setImageOptions = useCompressionStore((s) => s.setImageOptions);
 
-  const hasVideos = files.some((f) => f.mediaType === "video");
-  const hasImages = files.some((f) => f.mediaType === "image");
-
-  const visiblePresets = BUILTIN_PRESETS.filter((p) => {
-    if (p.mediaType === "video" && hasVideos) return true;
-    if (p.mediaType === "image" && hasImages) return true;
-    return false;
-  });
+  const visiblePresets = BUILTIN_PRESETS.filter((p) => p.mediaType === mediaType);
 
   const handleSelect = (preset: PresetDef) => {
-    setActivePreset(preset.id);
-    if (preset.videoOptions) {
-      setVideoOptions({ ...DEFAULT_VIDEO_OPTIONS, ...preset.videoOptions });
-      // Re-set active preset since setVideoOptions clears it
-      useCompressionStore.setState({ activePreset: preset.id });
-    }
-    if (preset.imageOptions) {
-      setImageOptions({ ...DEFAULT_IMAGE_OPTIONS, ...preset.imageOptions });
-      useCompressionStore.setState({ activePreset: preset.id });
-    }
+    applyPreset(preset.id, {
+      video: preset.videoOptions ? { ...DEFAULT_VIDEO_OPTIONS, ...preset.videoOptions } : undefined,
+      image: preset.imageOptions ? { ...DEFAULT_IMAGE_OPTIONS, ...preset.imageOptions } : undefined,
+    });
   };
 
   return (
     <div>
       <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        Presets
+        Preset
       </h3>
-      <div className="space-y-1">
-        {visiblePresets.map((preset) => (
-          <button
-            key={preset.id}
-            onClick={() => handleSelect(preset)}
-            className="w-full rounded-md border px-3 py-2 text-left transition-colors"
-            style={{
-              borderColor: activePreset === preset.id ? "var(--accent)" : "var(--border)",
-              backgroundColor: activePreset === preset.id ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-            }}
-          >
-            <div className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+      <div className="flex flex-wrap gap-1.5">
+        {visiblePresets.map((preset) => {
+          const isActive = activePreset === preset.id;
+          return (
+            <button
+              key={preset.id}
+              onClick={() => handleSelect(preset)}
+              title={preset.description}
+              className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+              style={{
+                borderColor: isActive ? "var(--accent)" : "var(--border)",
+                backgroundColor: isActive ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
+                color: "var(--text-primary)",
+              }}
+            >
               {preset.name}
-            </div>
-            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              {preset.description}
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
         <button
           onClick={() => setActivePreset(null)}
-          className="w-full rounded-md border px-3 py-2 text-left text-xs transition-colors"
+          className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
           style={{
             borderColor: activePreset === null ? "var(--accent)" : "var(--border)",
             backgroundColor: activePreset === null ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",

@@ -6,13 +6,7 @@ import { useClipboardPaste } from "../../hooks/useClipboardPaste";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { DropZone } from "../dropzone/DropZone";
 import { FileList } from "../file-list/FileList";
-import { VideoControls } from "../controls/VideoControls";
-import { ImageControls } from "../controls/ImageControls";
-import { PresetSelector } from "../controls/PresetSelector";
-import { AudioControls } from "../controls/AudioControls";
-import { GifControls } from "../controls/GifControls";
-import { PdfControls } from "../controls/PdfControls";
-import { OutputSettings } from "../output/OutputSettings";
+import { Sidebar } from "./Sidebar";
 import { ResultsSummary } from "../output/ResultsSummary";
 import { HistoryPanel } from "../history/HistoryPanel";
 import { LogViewer } from "../logs/LogViewer";
@@ -125,9 +119,6 @@ export function AppShell() {
     }
   }, [files, updateFileProbe]);
   const hasFiles = files.length > 0;
-  const hasVideos = files.some((f) => f.mediaType === "video");
-  const hasImages = files.some((f) => f.mediaType === "image");
-  const hasPdfs = files.some((f) => f.mediaType === "pdf");
   const allComplete = hasFiles && files.every((f) => f.status === "complete" || f.status === "error");
 
   return (
@@ -156,20 +147,7 @@ export function AppShell() {
       </div>
 
       {/* Right panel: controls */}
-      {hasFiles && (
-        <div
-          className="flex w-80 flex-col gap-4 overflow-y-auto border-l p-4"
-          style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}
-        >
-          <PresetSelector />
-          {hasVideos && <VideoControls />}
-          {hasImages && <ImageControls />}
-          {hasVideos && <AudioControls />}
-          {hasVideos && <GifControls />}
-          {hasPdfs && <PdfControls />}
-          <OutputSettings />
-        </div>
-      )}
+      {hasFiles && <Sidebar />}
     </div>
     </>
   );

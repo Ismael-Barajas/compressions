@@ -45,7 +45,11 @@ export function OutputSettings() {
       {/* Output mode radios */}
       <div className="mb-3 space-y-1.5">
         {OUTPUT_MODES.map((mode) => (
-          <label key={mode.value} className="flex cursor-pointer items-center gap-2">
+          <label
+            key={mode.value}
+            className="flex cursor-pointer items-center gap-2"
+            onClick={() => setOutputMode(mode.value)}
+          >
             <div
               className="flex h-4 w-4 items-center justify-center rounded-full border"
               style={{

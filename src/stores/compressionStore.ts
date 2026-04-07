@@ -47,6 +47,9 @@ const DEFAULT_PDF_OPTIONS: PdfOptions = {
   dpi: null,
 };
 
+export type SidebarTab = "compress" | "tools";
+export type CompressTab = "video" | "image" | "pdf";
+
 interface CompressionStore {
   files: QueuedFile[];
   videoOptions: VideoOptions;
@@ -59,6 +62,8 @@ interface CompressionStore {
   subfolderName: string;
   outputTemplate: string;
   activePreset: string | null;
+  activeSidebarTab: SidebarTab;
+  activeCompressTab: CompressTab | null;
   theme: "light" | "dark";
   isCompressing: boolean;
 
@@ -80,6 +85,9 @@ interface CompressionStore {
   setSubfolderName: (name: string) => void;
   setOutputTemplate: (template: string) => void;
   setActivePreset: (id: string | null) => void;
+  applyPreset: (id: string, options: { video?: VideoOptions; image?: ImageOptions }) => void;
+  setActiveSidebarTab: (tab: SidebarTab) => void;
+  setActiveCompressTab: (tab: CompressTab | null) => void;
   toggleTheme: () => void;
   setIsCompressing: (value: boolean) => void;
   retryFile: (id: string) => void;
@@ -113,6 +121,8 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   subfolderName: "compressed",
   outputTemplate: getStoredTemplate(),
   activePreset: null,
+  activeSidebarTab: "compress",
+  activeCompressTab: null,
   theme: getInitialTheme(),
   isCompressing: false,
 
@@ -208,6 +218,17 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   },
 
   setActivePreset: (id) => set({ activePreset: id }),
+
+  applyPreset: (id, options) =>
+    set((state) => ({
+      activePreset: id,
+      videoOptions: options.video ?? state.videoOptions,
+      imageOptions: options.image ?? state.imageOptions,
+    })),
+
+  setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),
+
+  setActiveCompressTab: (tab) => set({ activeCompressTab: tab }),
 
   toggleTheme: () =>
     set((state) => {
