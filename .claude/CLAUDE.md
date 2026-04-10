@@ -83,11 +83,22 @@ These rules are drawn from the grug-brained developer philosophy. Take them seri
 
 **Say "I don't understand this" out loud.** Admitting complexity is confusing is not weakness — it keeps complexity demons from winning. If the code is hard to explain, that's the code's fault.
 
+## Rust Changes
+
+After editing any `.rs` file, run:
+
+```bash
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+```
+
+Fix all warnings before proceeding.
+
 ## Phase Completion Checklist
 
 After completing every phase sub-task (e.g. 10.1, 10.2, 11.1):
 
 1. **Verify TypeScript:** run `npx tsc --noEmit` — must pass with zero errors
 2. **Verify Rust:** run `cargo check --manifest-path src-tauri/Cargo.toml` — must pass with zero errors
-3. **Update CLAUDE.md:** change `Current Status` to reflect what just completed and what is next
-4. **Update PLAN.md:** mark the completed phase row as ✅ Complete in the Implementation Status table
+3. **Rust lint:** run `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` — must pass with zero warnings
+4. **Update CLAUDE.md:** change `Current Status` to reflect what just completed and what is next
+5. **Update PLAN.md:** mark the completed phase row as ✅ Complete in the Implementation Status table
