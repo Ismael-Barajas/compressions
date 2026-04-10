@@ -42,8 +42,7 @@
       "binaries/gs"
     ],
     "resources": [
-      "binaries/gs-res/**/*",
-      "binaries/gsdll64.dll"
+      "binaries/gs-res/**/*"
     ],
     "windows": {
       "nsis": {
