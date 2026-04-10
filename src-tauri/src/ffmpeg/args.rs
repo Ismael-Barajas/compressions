@@ -46,11 +46,32 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         args.push("yuv420p".into());
     }
 
-    // Quality — HW encoders use -q:v (0-100), software uses CRF
+    // Quality — HW encoders use codec-specific rate control, software uses CRF
+    let is_nvenc = opts
+        .hw_encoder
+        .as_deref()
+        .map_or(false, |hw| hw.contains("nvenc"));
+
     if is_hw {
-        let q = ((51u16.saturating_sub(opts.crf.min(51) as u16)) * 100 / 51) as u8;
-        args.push("-q:v".into());
-        args.push(q.to_string());
+        if is_nvenc {
+            // NVENC: constant quality VBR. -cq takes the same 0-51 scale as CRF.
+            args.push("-rc".into());
+            args.push("vbr".into());
+            args.push("-cq".into());
+            args.push(opts.crf.to_string());
+            if opts.bitrate.is_none() {
+                args.push("-b:v".into());
+                args.push("0".into());
+            }
+            // p5 = balanced quality/speed; hardcoded since NVENC presets aren't user-facing
+            args.push("-preset".into());
+            args.push("p5".into());
+        } else {
+            // Fallback HW path (videotoolbox-style): -q:v on a 0-100 scale (higher = better)
+            let q = ((51u16.saturating_sub(opts.crf.min(51) as u16)) * 100 / 51) as u8;
+            args.push("-q:v".into());
+            args.push(q.to_string());
+        }
     } else {
         args.push("-crf".into());
         args.push(opts.crf.to_string());
@@ -65,7 +86,7 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         ));
     }
 
-    // Bitrate (overrides CRF if set)
+    // Bitrate (overrides CRF/CQ if set)
     if let Some(ref bitrate) = opts.bitrate {
         args.push("-b:v".into());
         args.push(bitrate.clone());
@@ -412,5 +433,50 @@ mod tests {
         // CRF 23 → q = (51-23)*100/51 = 54
         let qv_idx = args.iter().position(|a| a == "-q:v").unwrap();
         assert_eq!(args[qv_idx + 1], "54");
+    }
+
+    #[test]
+    fn nvenc_basic_args() {
+        let mut opts = default_video_opts();
+        opts.crf = 28;
+        opts.hw_encoder = Some("h264_nvenc".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"h264_nvenc".to_string()));
+        assert!(args.contains(&"-rc".to_string()));
+        assert!(args.contains(&"vbr".to_string()));
+        assert!(args.contains(&"-cq".to_string()));
+        assert!(args.contains(&"28".to_string()));
+        assert!(args.contains(&"-b:v".to_string()));
+        assert!(args.contains(&"0".to_string()));
+        assert!(args.contains(&"-preset".to_string()));
+        assert!(args.contains(&"p5".to_string()));
+        // Must not use software-style flags
+        assert!(!args.contains(&"-crf".to_string()));
+        assert!(!args.contains(&"-q:v".to_string()));
+    }
+
+    #[test]
+    fn nvenc_hevc_basic_args() {
+        let mut opts = default_video_opts();
+        opts.hw_encoder = Some("hevc_nvenc".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert!(args.contains(&"hevc_nvenc".to_string()));
+        assert!(args.contains(&"-rc".to_string()));
+        assert!(args.contains(&"-cq".to_string()));
+    }
+
+    #[test]
+    fn nvenc_with_bitrate_skips_bv_zero() {
+        let mut opts = default_video_opts();
+        opts.hw_encoder = Some("h264_nvenc".into());
+        opts.bitrate = Some("5M".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        // Should have -cq (quality) and -b:v 5M, but NOT -b:v 0
+        assert!(args.contains(&"-cq".to_string()));
+        assert!(args.contains(&"5M".to_string()));
+        assert!(!args.contains(&"0".to_string()));
+        // Only one -b:v flag
+        let bv_count = args.iter().filter(|a| *a == "-b:v").count();
+        assert_eq!(bv_count, 1);
     }
 }
