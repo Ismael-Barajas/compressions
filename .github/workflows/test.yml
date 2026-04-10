@@ -23,7 +23,49 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run test:run
+
+      - name: Run tests
+        run: npm run test:run -- --reporter=verbose --reporter=json --outputFile=vitest-results.json
+
+      - name: Add test summary
+        if: always()
+        run: |
+          node - << 'EOF'
+          const fs = require('fs');
+          let md = '';
+          try {
+            const r = JSON.parse(fs.readFileSync('vitest-results.json', 'utf8'));
+            const passed = r.numPassedTests ?? 0;
+            const failed = r.numFailedTests ?? 0;
+            const skipped = r.numPendingTests ?? 0;
+            const total = r.numTotalTests ?? 0;
+            const icon = failed > 0 ? '❌' : '✅';
+            md += `## ${icon} Frontend Tests\n\n`;
+            md += `| | Count |\n|---|---|\n`;
+            md += `| ✅ Passed | ${passed} |\n`;
+            if (failed > 0) md += `| ❌ Failed | ${failed} |\n`;
+            if (skipped > 0) md += `| ⏭️ Skipped | ${skipped} |\n`;
+            md += `| **Total** | **${total}** |\n\n`;
+            if (failed > 0) {
+              md += '### Failures\n\n';
+              for (const suite of (r.testResults || [])) {
+                for (const t of (suite.testResults || [])) {
+                  if (t.status === 'failed') {
+                    md += `- ❌ \`${t.fullName}\`\n`;
+                    if (t.failureMessages?.length > 0) {
+                      const msg = t.failureMessages[0].split('\n').slice(0, 8).join('\n');
+                      md += `\n\`\`\`\n${msg}\n\`\`\`\n\n`;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            md += '## Frontend Tests\n\n⚠️ Could not parse test results: ' + e.message + '\n';
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+          EOF
+
       - run: npx tsc --noEmit
 
   rust-lint:
@@ -111,7 +153,40 @@ jobs:
           done
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tee rust-test-output.txt
+
+      - name: Add test summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Rust Tests (${{ matrix.os }})"
+            echo ""
+            if [[ -f rust-test-output.txt ]]; then
+              result=$(grep "^test result:" rust-test-output.txt || true)
+              if [[ -n "$result" ]]; then
+                if echo "$result" | grep -q "FAILED"; then
+                  echo "❌ $result"
+                else
+                  echo "✅ $result"
+                fi
+              else
+                echo "⚠️ No result summary found"
+              fi
+              echo ""
+              if grep -qE "^test .+ \.\.\. FAILED$" rust-test-output.txt 2>/dev/null; then
+                echo "<details><summary>Failed tests</summary>"
+                echo ""
+                echo '```'
+                sed -n '/^failures:/,/^test result:/p' rust-test-output.txt | head -50
+                echo '```'
+                echo "</details>"
+              fi
+            else
+              echo "⚠️ No output file found"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   rust-benchmarks:
     needs: [rust-tests]
@@ -139,7 +214,50 @@ jobs:
           done
 
       - name: Run benchmarks
-        run: cargo bench --manifest-path src-tauri/Cargo.toml --bench compression_bench
+        run: cargo bench --manifest-path src-tauri/Cargo.toml --bench compression_bench 2>&1 | tee bench-output.txt
+
+      - name: Add benchmark summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmark Results"
+            echo ""
+            python3 - << 'PYEOF'
+          import json, pathlib, sys
+
+          def fmt_ns(ns):
+              if ns >= 1e9: return f"{ns/1e9:.3f} s"
+              if ns >= 1e6: return f"{ns/1e6:.3f} ms"
+              if ns >= 1e3: return f"{ns/1e3:.3f} µs"
+              return f"{ns:.1f} ns"
+
+          crit = pathlib.Path("src-tauri/target/criterion")
+          if not crit.exists():
+              print("⚠️ No criterion output found")
+              sys.exit(0)
+
+          rows = []
+          for est_path in sorted(crit.glob("**/new/estimates.json")):
+              parts = est_path.parts
+              try:
+                  crit_idx = list(parts).index("criterion")
+                  name = "/".join(parts[crit_idx + 1:-2])
+                  d = json.loads(est_path.read_text())
+                  mean = d["mean"]["point_estimate"]
+                  std = d["std_dev"]["point_estimate"]
+                  rows.append((name, fmt_ns(mean), fmt_ns(std)))
+              except Exception:
+                  pass
+
+          if rows:
+              print("| Benchmark | Mean | Std Dev |")
+              print("|-----------|------|---------|")
+              for name, mean, std in rows:
+                  print(f"| {name} | {mean} | {std} |")
+          else:
+              print("⚠️ No benchmark results found")
+          PYEOF
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
         with:
