@@ -37,7 +37,7 @@ pub fn validate_video_options(opts: &VideoOptions) -> Result<(), String> {
         validate_range(res.height, 16, 7680, "resolution height")?;
     }
     if let Some(fps) = opts.framerate {
-        if fps < 1.0 || fps > 240.0 {
+        if !(1.0..=240.0).contains(&fps) {
             return Err(format!("framerate must be between 1 and 240 (got {})", fps));
         }
     }

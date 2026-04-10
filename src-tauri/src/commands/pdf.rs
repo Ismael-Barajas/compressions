@@ -135,9 +135,18 @@ pub async fn compress_pdf(
             }
             CommandEvent::Terminated(status) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
-                let output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
-
+                let mut output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
                 let success = status.code == Some(0);
+
+                // If Ghostscript produced a larger file, keep the original
+                if success && output_size >= input_size && input_size > 0 {
+                    if let Err(e) = std::fs::copy(&input, &output) {
+                        tracing::warn!(path = %output, error = %e, "Failed to copy original over bloated PDF output");
+                    } else {
+                        output_size = input_size;
+                    }
+                }
+
                 let result = CompressionResult {
                     job_id: job_id.clone(),
                     input_path: input.clone(),

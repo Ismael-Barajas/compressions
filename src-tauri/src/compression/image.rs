@@ -14,7 +14,7 @@ pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(),
         .unwrap_or_default();
 
     if input_ext == "gif" {
-        return encode_gif(input, output);
+        return encode_gif(input, output, options.quality);
     }
 
     let img = image::open(input).map_err(|e| format!("Failed to open image: {}", e))?;
@@ -33,7 +33,7 @@ pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(),
         ImageFormat::Png => encode_png(&img, output, preserve),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
         ImageFormat::Avif => encode_avif(&img, output, options.quality),
-        ImageFormat::Gif => encode_gif(input, output),
+        ImageFormat::Gif => encode_gif(input, output, options.quality),
     }
 }
 
@@ -94,7 +94,7 @@ fn encode_png(img: &DynamicImage, output: &str, preserve_metadata: bool) -> Resu
     img.write_to(&mut cursor, image::ImageFormat::Png)
         .map_err(|e| format!("Failed to encode PNG: {}", e))?;
 
-    let mut opts = oxipng::Options::from_preset(3);
+    let mut opts = oxipng::Options::from_preset(4);
     opts.strip = if preserve_metadata {
         oxipng::StripChunks::None
     } else {
@@ -158,7 +158,7 @@ fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), Stri
 
     let res = ravif::Encoder::new()
         .with_quality(quality as f32)
-        .with_speed(7)
+        .with_speed(6)
         .with_num_threads(Some(4))
         .encode_rgba(img_ref)
         .map_err(|e| format!("Failed to encode AVIF: {}", e))?;
@@ -166,7 +166,7 @@ fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), Stri
     std::fs::write(output, res.avif_file).map_err(|e| format!("Failed to write AVIF: {}", e))
 }
 
-fn encode_gif(input: &str, output: &str) -> Result<(), String> {
+fn encode_gif(input: &str, output: &str, quality: u8) -> Result<(), String> {
     use gif::{DecodeOptions, Encoder, Frame, Repeat};
     use std::fs::File;
 
@@ -224,7 +224,7 @@ fn encode_gif(input: &str, output: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to set GIF repeat: {}", e))?;
 
     let mut liq = imagequant::new();
-    liq.set_quality(0, 100)
+    liq.set_quality(0, quality)
         .map_err(|e| format!("imagequant quality error: {}", e))?;
 
     for raw in &raw_frames {

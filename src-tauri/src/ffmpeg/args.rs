@@ -50,7 +50,7 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
     let is_nvenc = opts
         .hw_encoder
         .as_deref()
-        .map_or(false, |hw| hw.contains("nvenc"));
+        .is_some_and(|hw| hw.contains("nvenc"));
 
     if is_hw {
         if is_nvenc {
