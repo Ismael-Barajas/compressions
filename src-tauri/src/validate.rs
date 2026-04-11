@@ -26,6 +26,7 @@ fn validate_range(value: u32, min: u32, max: u32, field: &str) -> Result<(), Str
 }
 
 pub fn validate_video_options(opts: &VideoOptions) -> Result<(), String> {
+    validate_range(opts.crf as u32, 0, 51, "CRF")?;
     if let Some(ref bitrate) = opts.bitrate {
         validate_bitrate(bitrate, "video bitrate")?;
     }
@@ -107,6 +108,21 @@ mod tests {
             hw_encoder: None,
         };
         assert!(validate_video_options(&opts).is_ok());
+    }
+
+    #[test]
+    fn rejects_extreme_crf() {
+        let opts = VideoOptions {
+            codec: VideoCodec::H264,
+            crf: 52,
+            resolution: None,
+            bitrate: None,
+            framerate: None,
+            audio_codec: AudioCodec::None,
+            audio_bitrate: None,
+            hw_encoder: None,
+        };
+        assert!(validate_video_options(&opts).is_err());
     }
 
     #[test]

@@ -5,7 +5,9 @@ import {
   compressImagesBatch,
   compressPdfsBatch,
   extractAudio,
+  extractAudioBatch,
   convertVideoToGif,
+  convertVideosToGifBatch,
   cancelCompression,
 } from "../lib/commands";
 import { useCompressionStore } from "../stores/compressionStore";
@@ -142,6 +144,9 @@ export function useCompression() {
                     }
                     break;
                   }
+                  case "progress":
+                    updateProgress(event.data.jobId, event.data);
+                    break;
                   case "completed":
                     markComplete(event.data.jobId, event.data);
                     break;
@@ -386,5 +391,154 @@ export function useCompression() {
     [setFileStatus, updateProgress, markComplete, markError, setIsCompressing],
   );
 
-  return { startCompression, cancelFile, extractAudioFromFile, convertToGif };
+  const extractAudioFromAll = useCallback(async () => {
+    const {
+      audioOptions, outputDir, outputMode, subfolderName, outputTemplate, files,
+    } = useCompressionStore.getState();
+
+    const videoFiles = files.filter(
+      (f) => f.mediaType === "video" && f.status === "queued",
+    );
+    if (videoFiles.length === 0) return;
+
+    setIsCompressing(true);
+
+    const audioExt = getAudioExtension(audioOptions.format);
+    const batch = videoFiles.map((f) => {
+      const parentDir = getParentDir(f.path);
+      const sep = parentDir.includes("\\") ? "\\" : "/";
+      let outDir: string;
+      switch (outputMode) {
+        case "subfolder":
+          outDir = `${parentDir}${sep}${subfolderName}`;
+          break;
+        case "customDir":
+          outDir = outputDir ?? parentDir;
+          break;
+        default:
+          outDir = parentDir;
+      }
+      return {
+        input: f.path,
+        output: buildOutputPath(f.path, outDir, audioExt, outputTemplate),
+      };
+    });
+
+    const videoFileIds = videoFiles.map((f) => f.id);
+    let idx = 0;
+
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = (event: ProgressEvent) => {
+      switch (event.event) {
+        case "started": {
+          const fileId = videoFileIds[idx];
+          if (fileId) setFileStatus(fileId, "processing", event.data.jobId);
+          idx++;
+          break;
+        }
+        case "progress":
+          updateProgress(event.data.jobId, event.data);
+          break;
+        case "completed":
+          markComplete(event.data.jobId, event.data);
+          break;
+        case "error":
+          markError(event.data.jobId, event.data.message);
+          break;
+      }
+    };
+
+    try {
+      await extractAudioBatch(batch, audioOptions, channel);
+    } catch (err) {
+      for (const f of videoFiles) {
+        const current = useCompressionStore.getState().files.find((sf) => sf.id === f.id);
+        if (current && current.status === "processing") {
+          useCompressionStore.setState((state) => ({
+            files: state.files.map((sf) =>
+              sf.id === f.id ? { ...sf, status: "error" as const, error: String(err) } : sf,
+            ),
+          }));
+        }
+      }
+    } finally {
+      setIsCompressing(false);
+    }
+  }, [setFileStatus, updateProgress, markComplete, markError, setIsCompressing]);
+
+  const convertAllToGif = useCallback(async () => {
+    const {
+      gifOptions, outputDir, outputMode, subfolderName, outputTemplate, files,
+    } = useCompressionStore.getState();
+
+    const videoFiles = files.filter(
+      (f) => f.mediaType === "video" && f.status === "queued",
+    );
+    if (videoFiles.length === 0) return;
+
+    setIsCompressing(true);
+
+    const batch = videoFiles.map((f) => {
+      const parentDir = getParentDir(f.path);
+      const sep = parentDir.includes("\\") ? "\\" : "/";
+      let outDir: string;
+      switch (outputMode) {
+        case "subfolder":
+          outDir = `${parentDir}${sep}${subfolderName}`;
+          break;
+        case "customDir":
+          outDir = outputDir ?? parentDir;
+          break;
+        default:
+          outDir = parentDir;
+      }
+      return {
+        input: f.path,
+        output: buildOutputPath(f.path, outDir, "gif", outputTemplate),
+      };
+    });
+
+    const videoFileIds = videoFiles.map((f) => f.id);
+    let idx = 0;
+
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = (event: ProgressEvent) => {
+      switch (event.event) {
+        case "started": {
+          const fileId = videoFileIds[idx];
+          if (fileId) setFileStatus(fileId, "processing", event.data.jobId);
+          idx++;
+          break;
+        }
+        case "progress":
+          updateProgress(event.data.jobId, event.data);
+          break;
+        case "completed":
+          markComplete(event.data.jobId, event.data);
+          break;
+        case "error":
+          markError(event.data.jobId, event.data.message);
+          break;
+      }
+    };
+
+    try {
+      await convertVideosToGifBatch(batch, gifOptions, channel);
+    } catch (err) {
+      for (const f of videoFiles) {
+        const current = useCompressionStore.getState().files.find((sf) => sf.id === f.id);
+        if (current && current.status === "processing") {
+          useCompressionStore.setState((state) => ({
+            files: state.files.map((sf) =>
+              sf.id === f.id ? { ...sf, status: "error" as const, error: String(err) } : sf,
+            ),
+          }));
+        }
+      }
+    } finally {
+      setIsCompressing(false);
+    }
+  }, [setFileStatus, updateProgress, markComplete, markError, setIsCompressing]);
+
+  return { startCompression, cancelFile, extractAudioFromFile, convertToGif, extractAudioFromAll, convertAllToGif };
 }

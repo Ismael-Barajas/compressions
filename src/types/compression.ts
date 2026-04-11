@@ -96,6 +96,7 @@ export interface QueuedFile {
   progress: number;
   resolution?: Resolution | null;
   duration?: number | null;
+  thumbnailPath?: string | null;
   jobId?: string;
   result?: CompressionResult;
   error?: string;

@@ -1,9 +1,10 @@
 import { useCompressionStore } from "../../stores/compressionStore";
 import type { DitherMode } from "../../types/compression";
+import { SectionLabel, FieldGroup, ChipButton, SelectInput } from "./VideoControls";
 
 const DITHER_MODES: { value: DitherMode; label: string }[] = [
   { value: "floyd_steinberg", label: "Floyd-Steinberg" },
-  { value: "bayer", label: "Bayer (ordered)" },
+  { value: "bayer", label: "Bayer" },
   { value: "none", label: "None" },
 ];
 
@@ -20,17 +21,11 @@ export function GifControls() {
   const setOptions = useCompressionStore((s) => s.setGifOptions);
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        GIF Conversion
-      </h3>
+    <div className="space-y-5">
+      <SectionLabel>GIF Conversion</SectionLabel>
 
       {/* FPS */}
-      <div>
-        <label className="mb-1.5 flex items-center justify-between text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          <span>Frame Rate</span>
-          <span style={{ color: "var(--text-muted)" }}>{options.fps} fps</span>
-        </label>
+      <FieldGroup label="Frame Rate" trailing={<span className="font-data">{options.fps} fps</span>}>
         <input
           type="range"
           min={5}
@@ -39,22 +34,12 @@ export function GifControls() {
           value={options.fps}
           onChange={(e) => setOptions({ fps: Number(e.target.value) })}
           className="w-full"
-          style={{ accentColor: "var(--accent)" }}
         />
-      </div>
+      </FieldGroup>
 
       {/* Max Width */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Max Width
-        </label>
-        <select
-          className="w-full rounded-md border px-2 py-1.5 text-sm"
-          style={{
-            borderColor: "var(--border)",
-            backgroundColor: "var(--bg-primary)",
-            color: "var(--text-primary)",
-          }}
+      <FieldGroup label="Max Width">
+        <SelectInput
           value={options.width ?? "original"}
           onChange={(e) =>
             setOptions({
@@ -67,15 +52,11 @@ export function GifControls() {
               {p.label}
             </option>
           ))}
-        </select>
-      </div>
+        </SelectInput>
+      </FieldGroup>
 
       {/* Max Colors */}
-      <div>
-        <label className="mb-1.5 flex items-center justify-between text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          <span>Colors</span>
-          <span style={{ color: "var(--text-muted)" }}>{options.maxColors}</span>
-        </label>
+      <FieldGroup label="Colors" trailing={<span className="font-data">{options.maxColors}</span>}>
         <input
           type="range"
           min={16}
@@ -84,32 +65,23 @@ export function GifControls() {
           value={options.maxColors}
           onChange={(e) => setOptions({ maxColors: Number(e.target.value) })}
           className="w-full"
-          style={{ accentColor: "var(--accent)" }}
         />
-      </div>
+      </FieldGroup>
 
       {/* Dither Mode */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Dither
-        </label>
+      <FieldGroup label="Dither">
         <div className="grid grid-cols-3 gap-1.5">
           {DITHER_MODES.map((d) => (
-            <button
+            <ChipButton
               key={d.value}
+              active={options.dither === d.value}
               onClick={() => setOptions({ dither: d.value })}
-              className="rounded-md border px-2 py-1.5 text-center text-xs transition-colors"
-              style={{
-                borderColor: options.dither === d.value ? "var(--accent)" : "var(--border)",
-                backgroundColor: options.dither === d.value ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-                color: options.dither === d.value ? "var(--accent)" : "var(--text-secondary)",
-              }}
             >
               {d.label}
-            </button>
+            </ChipButton>
           ))}
         </div>
-      </div>
+      </FieldGroup>
     </div>
   );
 }

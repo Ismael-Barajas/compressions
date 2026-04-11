@@ -10,7 +10,7 @@ use crate::compression::progress::parse_progress_line;
 use crate::ffmpeg::args::build_video_args;
 use crate::ffmpeg::probe::probe_video_duration;
 use crate::history::storage as history;
-use crate::state::AppState;
+use crate::state::{AppState, HwEncoders};
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload, VideoCodec,
     VideoOptions,
@@ -117,6 +117,7 @@ async fn run_ffmpeg(
 pub async fn compress_video(
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
+    hw_state: State<'_, HwEncoders>,
     input: String,
     output: String,
     options: VideoOptions,
@@ -143,10 +144,10 @@ pub async fn compress_video(
 
     let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
 
-    // Resolve HW encoder if available
+    // Resolve HW encoder if available (read-only, no mutex contention)
     let hw_encoder = {
-        let app_state = state.lock().map_err(|e| e.to_string())?;
-        resolve_hw_encoder(&options.codec, &app_state.hw_encoders)
+        let encoders = hw_state.0.read().map_err(|e| e.to_string())?;
+        resolve_hw_encoder(&options.codec, &encoders)
     };
 
     let _ = on_progress.send(ProgressEvent::Started {
@@ -248,6 +249,7 @@ pub async fn compress_video(
 pub async fn compress_videos_batch(
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
+    hw_state: State<'_, HwEncoders>,
     files: Vec<BatchEntry>,
     options: VideoOptions,
     on_progress: Channel<ProgressEvent>,
@@ -257,6 +259,7 @@ pub async fn compress_videos_batch(
         let result = compress_video(
             app.clone(),
             state.clone(),
+            hw_state.clone(),
             entry.input,
             entry.output,
             options.clone(),

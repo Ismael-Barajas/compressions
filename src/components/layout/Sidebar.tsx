@@ -10,8 +10,6 @@ export function Sidebar() {
 
   const hasVideos = files.some((f) => f.mediaType === "video");
 
-  // If the user is on the Tools tab and the queue no longer has any videos,
-  // bounce them back to Compress so they aren't staring at a disabled tab's contents.
   useEffect(() => {
     if (activeSidebarTab === "tools" && !hasVideos) {
       setActiveSidebarTab("compress");
@@ -23,9 +21,9 @@ export function Sidebar() {
       className="flex w-80 flex-col overflow-hidden border-l"
       style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}
     >
-      {/* Top-level tab strip */}
+      {/* Tab strip — underline style */}
       <div
-        className="flex gap-1 border-b p-2"
+        className="flex border-b"
         style={{ borderColor: "var(--border)" }}
         role="tablist"
         aria-label="Sidebar"
@@ -46,7 +44,7 @@ export function Sidebar() {
       </div>
 
       {/* Tab content */}
-      <div className="flex flex-1 flex-col overflow-hidden p-4">
+      <div className="flex flex-1 flex-col overflow-y-auto p-4">
         {activeSidebarTab === "compress" && <CompressTab />}
         {activeSidebarTab === "tools" && hasVideos && <ToolsTab />}
       </div>
@@ -71,15 +69,25 @@ function SidebarTabButton({ label, isActive, disabled, title, onClick }: Sidebar
       disabled={disabled}
       title={title}
       onClick={onClick}
-      className="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+      className="relative flex-1 px-4 py-2.5 text-[13px] font-semibold tracking-tight transition-colors"
       style={{
-        backgroundColor: isActive ? "var(--accent)" : "transparent",
-        color: isActive ? "var(--accent-fg, white)" : disabled ? "var(--text-muted)" : "var(--text-secondary)",
+        color: isActive
+          ? "var(--accent)"
+          : disabled
+            ? "var(--text-muted)"
+            : "var(--text-secondary)",
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.4 : 1,
       }}
     >
       {label}
+      {/* Active underline indicator */}
+      {isActive && (
+        <span
+          className="absolute bottom-0 left-4 right-4 h-[2px]"
+          style={{ backgroundColor: "var(--accent)" }}
+        />
+      )}
     </button>
   );
 }

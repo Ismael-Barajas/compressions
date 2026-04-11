@@ -56,12 +56,7 @@ pub fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
 
     std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-
-    let file_path = temp_dir.join(format!("clipboard_{}.png", timestamp));
+    let file_path = temp_dir.join(format!("clipboard_{}.png", uuid::Uuid::new_v4()));
 
     // Convert RGBA bytes to PNG
     let width = image.width as u32;
@@ -80,16 +75,21 @@ pub fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
 
 fn urldecode(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let hi = chars.next().unwrap_or(b'0');
-            let lo = chars.next().unwrap_or(b'0');
-            let val = hex_val(hi) * 16 + hex_val(lo);
-            result.push(val as char);
-        } else {
-            result.push(b as char);
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = bytes[i + 1];
+            let lo = bytes[i + 2];
+            if hi.is_ascii_hexdigit() && lo.is_ascii_hexdigit() {
+                let val = hex_val(hi) * 16 + hex_val(lo);
+                result.push(val as char);
+                i += 3;
+                continue;
+            }
         }
+        result.push(bytes[i] as char);
+        i += 1;
     }
     result
 }
@@ -124,9 +124,16 @@ mod tests {
 
     #[test]
     fn urldecode_truncated_percent() {
-        // Truncated %2 at end — should not panic
-        let result = urldecode("/path%2");
-        assert!(!result.is_empty());
+        // Truncated %2 at end — should leave literal %2
+        assert_eq!(urldecode("/path%2"), "/path%2");
+        // Lone % at end
+        assert_eq!(urldecode("/path%"), "/path%");
+    }
+
+    #[test]
+    fn urldecode_invalid_hex_passthrough() {
+        // Non-hex chars after % — should leave literal
+        assert_eq!(urldecode("/path%ZZ"), "/path%ZZ");
     }
 
     #[test]

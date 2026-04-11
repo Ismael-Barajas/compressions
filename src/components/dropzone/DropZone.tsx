@@ -82,22 +82,36 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
       className={`drop-zone flex-1 cursor-pointer ${isDragOver ? "drag-over" : ""}`}
       onClick={handleBrowse}
     >
-      <Upload
-        size={48}
-        strokeWidth={1.5}
-        style={{ color: isDragOver ? "var(--accent)" : "var(--text-muted)" }}
-        className="mb-4"
-      />
-      <p className="text-lg font-medium" style={{ color: "var(--text-primary)" }}>
-        Drop files or folders here to compress
+      {/* Geometric upload icon */}
+      <div
+        className="relative mb-6 flex items-center justify-center"
+        style={{
+          width: 72,
+          height: 72,
+          border: `1.5px solid ${isDragOver ? "var(--accent)" : "var(--border)"}`,
+          transition: "border-color 0.2s, box-shadow 0.2s",
+          boxShadow: isDragOver ? "0 0 24px var(--accent-glow)" : "none",
+        }}
+      >
+        <Upload
+          size={28}
+          strokeWidth={1.5}
+          style={{ color: isDragOver ? "var(--accent)" : "var(--text-muted)" }}
+        />
+      </div>
+
+      <p className="text-base font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
+        Drop files or folders here
       </p>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-        or click to browse
+      <p className="mt-1.5 text-sm" style={{ color: "var(--text-secondary)" }}>
+        or click anywhere to browse
       </p>
-      <p className="mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
-        Supports MP4, MKV, AVI, MOV, WebM, JPG, PNG, WebP, AVIF, GIF, PDF, and more
-      </p>
-      <div className="mt-4 flex items-center gap-2">
+
+      <div className="mt-6 font-mono text-[10px] tracking-wide" style={{ color: "var(--text-muted)" }}>
+        MP4 / MKV / MOV / WebM / JPG / PNG / WebP / AVIF / GIF / PDF
+      </div>
+
+      <div className="relative z-10 mt-6 flex items-center gap-3">
         <button
           className="btn-primary flex items-center gap-2"
           onClick={(e) => {
@@ -105,7 +119,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
             handleBrowse();
           }}
         >
-          <FolderOpen size={16} />
+          <FolderOpen size={15} />
           Browse Files
         </button>
         <button
@@ -115,7 +129,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
             handleBrowseFolder();
           }}
         >
-          <FolderOpen size={16} />
+          <FolderOpen size={15} />
           Browse Folder
         </button>
       </div>

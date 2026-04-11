@@ -1,6 +1,7 @@
 import { useCompressionStore } from "../../stores/compressionStore";
 import { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS } from "../../stores/compressionStore";
 import type { VideoOptions, ImageOptions } from "../../types/compression";
+import { SectionLabel, ChipButton } from "./VideoControls";
 
 interface PresetDef {
   id: string;
@@ -90,39 +91,23 @@ export function PresetSelector({ mediaType }: PresetSelectorProps) {
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        Preset
-      </h3>
-      <div className="flex flex-wrap gap-1.5">
-        {visiblePresets.map((preset) => {
-          const isActive = activePreset === preset.id;
-          return (
-            <button
-              key={preset.id}
-              onClick={() => handleSelect(preset)}
-              title={preset.description}
-              className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
-              style={{
-                borderColor: isActive ? "var(--accent)" : "var(--border)",
-                backgroundColor: isActive ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-                color: "var(--text-primary)",
-              }}
-            >
-              {preset.name}
-            </button>
-          );
-        })}
-        <button
+      <SectionLabel>Preset</SectionLabel>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {visiblePresets.map((preset) => (
+          <ChipButton
+            key={preset.id}
+            active={activePreset === preset.id}
+            onClick={() => handleSelect(preset)}
+          >
+            {preset.name}
+          </ChipButton>
+        ))}
+        <ChipButton
+          active={activePreset === null}
           onClick={() => setActivePreset(null)}
-          className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
-          style={{
-            borderColor: activePreset === null ? "var(--accent)" : "var(--border)",
-            backgroundColor: activePreset === null ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-            color: "var(--text-secondary)",
-          }}
         >
           Custom
-        </button>
+        </ChipButton>
       </div>
     </div>
   );

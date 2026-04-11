@@ -1,10 +1,15 @@
 use std::collections::HashSet;
+use std::time::Duration;
 
 use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tokio::time::timeout;
 
 use crate::types::Resolution;
+
+/// Timeout for ffprobe calls (30 seconds).
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Known HW encoder names to look for in `ffmpeg -encoders` output.
 const HW_ENCODERS: &[&str] = &[
@@ -90,14 +95,25 @@ pub async fn probe_video_info(app: &AppHandle, path: &str) -> Result<VideoInfo, 
         .map_err(|e| format!("Failed to spawn ffprobe: {}", e))?;
 
     let mut output = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                output.push_str(&String::from_utf8_lossy(&bytes));
+    let recv_result = timeout(PROBE_TIMEOUT, async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) => {
+                    output.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
             }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
         }
+    })
+    .await;
+
+    if recv_result.is_err() {
+        return Err(format!(
+            "ffprobe timed out after {}s for: {}",
+            PROBE_TIMEOUT.as_secs(),
+            path
+        ));
     }
 
     let json: serde_json::Value = serde_json::from_str(&output)

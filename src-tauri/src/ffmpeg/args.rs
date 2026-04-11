@@ -40,8 +40,8 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         );
     }
 
-    // AV1 requires yuv420p pixel format
-    if matches!(opts.codec, VideoCodec::AV1) {
+    // Force yuv420p for maximum player compatibility (WMP, QuickTime, etc.)
+    if !is_hw {
         args.push("-pix_fmt".into());
         args.push("yuv420p".into());
     }
@@ -126,7 +126,7 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
     }
 
     // Faststart for MP4 (moves moov atom to front for streaming)
-    if output.ends_with(".mp4") {
+    if output.to_lowercase().ends_with(".mp4") {
         args.push("-movflags".into());
         args.push("+faststart".into());
     }
@@ -281,7 +281,8 @@ mod tests {
         assert!(args.contains(&"-crf".to_string()));
         assert!(args.contains(&"23".to_string()));
         assert!(args.contains(&"+faststart".to_string()));
-        assert!(!args.contains(&"-pix_fmt".to_string()));
+        assert!(args.contains(&"-pix_fmt".to_string()));
+        assert!(args.contains(&"yuv420p".to_string()));
     }
 
     #[test]

@@ -9,8 +9,8 @@ pub mod types;
 mod utils;
 mod validate;
 
-use state::AppState;
-use std::sync::Mutex;
+use state::{AppState, HwEncoders, ThumbnailSemaphore};
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,13 +30,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(Mutex::new(AppState::default()))
+        .manage(HwEncoders::default())
+        .manage(ThumbnailSemaphore(Arc::new(tokio::sync::Semaphore::new(4))))
         .setup(|app| {
+            // Set window icon explicitly so it shows in dev mode too
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_icon(tauri::include_image!("icons/icon.png")).ok();
+            }
+
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let encoders = ffmpeg::probe::detect_hw_encoders(&handle).await;
-                if let Some(state) = handle.try_state::<Mutex<AppState>>() {
-                    if let Ok(mut s) = state.lock() {
-                        s.hw_encoders = encoders;
+                if let Some(hw) = handle.try_state::<HwEncoders>() {
+                    if let Ok(mut w) = hw.0.write() {
+                        *w = encoders;
                     }
                 }
             });
@@ -68,7 +75,15 @@ pub fn run() {
             commands::logs::get_log_path,
             commands::logs::read_logs,
             commands::logs::clear_logs,
+            commands::thumbnail::generate_thumbnail,
+            commands::thumbnail::generate_thumbnails_batch,
+            commands::thumbnail::clear_thumbnail_cache,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::thumbnail::cleanup_thumbnail_cache();
+            }
+        });
 }

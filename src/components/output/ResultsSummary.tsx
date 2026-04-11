@@ -14,48 +14,55 @@ export function ResultsSummary() {
 
   return (
     <div
-      className="mt-4 rounded-lg border p-4"
-      style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}
+      className="mt-4 border p-4"
+      style={{
+        borderColor: "var(--border)",
+        backgroundColor: "var(--bg-secondary)",
+        borderLeft: "2px solid var(--success)",
+      }}
     >
-      <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+      <h3
+        className="mb-3 text-[11px] font-semibold uppercase tracking-widest"
+        style={{ color: "var(--text-muted)" }}
+      >
         Results
       </h3>
 
       <div className="grid grid-cols-3 gap-4 text-center">
         <div>
-          <div className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+          <div className="font-data text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
             {completedFiles.length}
           </div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Completed
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+            Done
           </div>
         </div>
         <div>
-          <div className="text-lg font-bold" style={{ color: "var(--success)" }}>
+          <div className="font-data text-lg font-semibold" style={{ color: "var(--success)" }}>
             {totalSavings}%
           </div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
             Saved
           </div>
         </div>
         <div>
-          <div className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+          <div className="font-data text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
             {formatFileSize(totalInput - totalOutput)}
           </div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
             Reduced
           </div>
         </div>
       </div>
 
       {totalInput > 0 && (
-        <div className="mt-3 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
+        <div className="font-data mt-3 text-center" style={{ color: "var(--text-secondary)" }}>
           {formatFileSize(totalInput)} → {formatFileSize(totalOutput)}
         </div>
       )}
 
       {errorFiles.length > 0 && (
-        <div className="mt-2 text-center text-xs" style={{ color: "var(--error)" }}>
+        <div className="font-data mt-2 text-center" style={{ color: "var(--error)" }}>
           {errorFiles.length} file{errorFiles.length !== 1 ? "s" : ""} failed
         </div>
       )}

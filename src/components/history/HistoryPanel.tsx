@@ -50,7 +50,6 @@ export function HistoryPanel() {
         getFileName(e.inputPath).toLowerCase().includes(q) ||
         e.mediaType.toLowerCase().includes(q),
     );
-    // Most recent first
     return [...list].reverse();
   }, [entries, searchQuery]);
 
@@ -59,7 +58,8 @@ export function HistoryPanel() {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "rgba(0, 0, 0, 0.6)" }}
       onClick={(e) => {
         if (e.target === backdropRef.current) close();
       }}
@@ -68,35 +68,42 @@ export function HistoryPanel() {
         role="dialog"
         aria-modal="true"
         aria-label="Compression History"
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border shadow-xl"
-        style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col border"
+        style={{
+          borderColor: "var(--border)",
+          backgroundColor: "var(--bg-primary)",
+          boxShadow: "var(--shadow-lg)",
+        }}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between border-b px-4 py-3"
           style={{ borderColor: "var(--border)" }}
         >
-          <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          <h2
+            className="text-[11px] font-semibold uppercase tracking-widest"
+            style={{ color: "var(--text-muted)" }}
+          >
             Compression History
           </h2>
           <div className="flex items-center gap-2">
             {entries.length > 0 && (
               <button
                 onClick={clearHistory}
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
+                className="flex items-center gap-1 px-2 py-1 text-xs transition-colors hover:opacity-80"
                 style={{ color: "var(--error)" }}
                 title="Clear history"
               >
-                <Trash2 size={14} />
+                <Trash2 size={13} />
                 Clear
               </button>
             )}
             <button
               onClick={close}
-              className="rounded p-1 transition-colors hover:opacity-80"
-              style={{ color: "var(--text-secondary)" }}
+              className="p-1 transition-colors hover:opacity-80"
+              style={{ color: "var(--text-muted)" }}
             >
-              <X size={16} />
+              <X size={15} />
             </button>
           </div>
         </div>
@@ -104,10 +111,10 @@ export function HistoryPanel() {
         {/* Search */}
         <div className="border-b px-4 py-2" style={{ borderColor: "var(--border)" }}>
           <div
-            className="flex items-center gap-2 rounded px-2 py-1"
-            style={{ backgroundColor: "var(--bg-secondary)" }}
+            className="flex items-center gap-2 px-2 py-1.5"
+            style={{ backgroundColor: "var(--bg-secondary)", border: "1px solid var(--border)" }}
           >
-            <Search size={14} style={{ color: "var(--text-muted)" }} />
+            <Search size={13} style={{ color: "var(--text-muted)" }} />
             <input
               type="text"
               value={searchQuery}
@@ -138,35 +145,38 @@ export function HistoryPanel() {
                 return (
                   <div
                     key={entry.id}
-                    className="flex items-center gap-3 rounded px-2 py-2 transition-colors"
-                    style={{ backgroundColor: "var(--bg-secondary)" }}
+                    className="flex items-center gap-3 px-3 py-2 transition-colors"
+                    style={{
+                      backgroundColor: "var(--bg-secondary)",
+                      borderLeft: `2px solid ${entry.success ? "var(--success)" : "var(--error)"}`,
+                    }}
                   >
-                    {/* Status icon */}
                     {entry.success ? (
-                      <CheckCircle size={14} style={{ color: "var(--success)", flexShrink: 0 }} />
+                      <CheckCircle size={13} style={{ color: "var(--success)", flexShrink: 0 }} />
                     ) : (
-                      <XCircle size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
+                      <XCircle size={13} style={{ color: "var(--error)", flexShrink: 0 }} />
                     )}
 
-                    {/* File info */}
                     <div className="min-w-0 flex-1">
                       <div
-                        className="truncate text-xs font-medium"
+                        className="truncate text-[13px] font-medium"
                         style={{ color: "var(--text-primary)" }}
                         title={entry.inputPath}
                       >
                         {getFileName(entry.inputPath)}
                       </div>
-                      <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                        <span className="rounded px-1" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+                      <div className="font-data mt-0.5 flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                        <span
+                          className="px-1 text-[10px] uppercase tracking-wider"
+                          style={{ backgroundColor: "var(--bg-tertiary)" }}
+                        >
                           {entry.mediaType}
                         </span>
                         <span>{formatTimestamp(entry.timestamp)}</span>
                       </div>
                     </div>
 
-                    {/* Size / savings */}
-                    <div className="text-right text-xs" style={{ flexShrink: 0 }}>
+                    <div className="font-data text-right" style={{ flexShrink: 0 }}>
                       {entry.success ? (
                         <>
                           <div style={{ color: "var(--text-primary)" }}>
@@ -196,7 +206,7 @@ export function HistoryPanel() {
         {/* Footer */}
         {entries.length > 0 && (
           <div
-            className="border-t px-4 py-2 text-xs"
+            className="font-data border-t px-4 py-2"
             style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
           >
             {entries.length} {entries.length === 1 ? "entry" : "entries"}

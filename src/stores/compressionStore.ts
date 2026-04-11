@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { clearThumbnailCache } from "../lib/commands";
 import type {
   QueuedFile,
   VideoOptions,
@@ -65,6 +66,7 @@ interface CompressionStore {
   activeSidebarTab: SidebarTab;
   activeCompressTab: CompressTab | null;
   theme: "light" | "dark";
+  showThumbnails: boolean;
   isCompressing: boolean;
 
   addFiles: (files: QueuedFile[]) => void;
@@ -75,6 +77,7 @@ interface CompressionStore {
   markError: (jobId: string, message: string) => void;
   setFileStatus: (id: string, status: QueuedFile["status"], jobId?: string) => void;
   updateFileProbe: (id: string, info: { size: number; resolution?: Resolution | null; duration?: number | null }) => void;
+  setThumbnailPath: (id: string, thumbnailPath: string) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setAudioOptions: (opts: Partial<AudioExtractionOptions>) => void;
@@ -89,6 +92,7 @@ interface CompressionStore {
   setActiveSidebarTab: (tab: SidebarTab) => void;
   setActiveCompressTab: (tab: CompressTab | null) => void;
   toggleTheme: () => void;
+  toggleThumbnails: () => void;
   setIsCompressing: (value: boolean) => void;
   retryFile: (id: string) => void;
 }
@@ -100,6 +104,13 @@ function getInitialTheme(): "light" | "dark" {
     if (window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
   }
   return "light";
+}
+
+function getStoredThumbnails(): boolean {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("compressions-show-thumbnails") === "true";
+  }
+  return false;
 }
 
 function getStoredTemplate(): string {
@@ -124,6 +135,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   activeSidebarTab: "compress",
   activeCompressTab: null,
   theme: getInitialTheme(),
+  showThumbnails: getStoredThumbnails(),
   isCompressing: false,
 
   addFiles: (newFiles) =>
@@ -136,7 +148,17 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   removeFile: (id) =>
     set((state) => ({ files: state.files.filter((f) => f.id !== id) })),
 
-  clearFiles: () => set({ files: [], isCompressing: false }),
+  clearFiles: () => {
+    clearThumbnailCache().catch(() => {});
+    return set({ files: [], isCompressing: false });
+  },
+
+  setThumbnailPath: (id, thumbnailPath) =>
+    set((state) => ({
+      files: state.files.map((f) =>
+        f.id === id ? { ...f, thumbnailPath } : f,
+      ),
+    })),
 
   updateFileProbe: (id, info) =>
     set((state) => ({
@@ -229,6 +251,13 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),
 
   setActiveCompressTab: (tab) => set({ activeCompressTab: tab }),
+
+  toggleThumbnails: () =>
+    set((state) => {
+      const next = !state.showThumbnails;
+      localStorage.setItem("compressions-show-thumbnails", String(next));
+      return { showThumbnails: next };
+    }),
 
   toggleTheme: () =>
     set((state) => {

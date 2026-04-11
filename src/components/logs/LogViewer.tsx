@@ -5,7 +5,7 @@ import type { LogLevel } from "../../types/compression";
 
 const LEVEL_COLORS: Record<string, string> = {
   ERROR: "var(--error)",
-  WARN: "#f59e0b",
+  WARN: "var(--warning)",
   INFO: "var(--accent)",
   DEBUG: "var(--text-muted)",
   TRACE: "var(--text-muted)",
@@ -14,7 +14,6 @@ const LEVEL_COLORS: Record<string, string> = {
 const LEVELS: Array<LogLevel | "ALL"> = ["ALL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
 
 function formatTimestamp(raw: string): string {
-  // tracing timestamps look like: 2026-04-04T12:00:00.000000Z
   const d = new Date(raw);
   if (isNaN(d.getTime())) return raw;
   return d.toLocaleTimeString(undefined, {
@@ -47,7 +46,6 @@ export function LogViewer() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [isOpen, close]);
 
-  // Auto-scroll to bottom when entries change
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -70,7 +68,8 @@ export function LogViewer() {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "rgba(0, 0, 0, 0.6)" }}
       onClick={(e) => {
         if (e.target === backdropRef.current) close();
       }}
@@ -79,22 +78,29 @@ export function LogViewer() {
         role="dialog"
         aria-modal="true"
         aria-label="Application Logs"
-        className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border shadow-xl"
-        style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
+        className="flex max-h-[80vh] w-full max-w-3xl flex-col border"
+        style={{
+          borderColor: "var(--border)",
+          backgroundColor: "var(--bg-primary)",
+          boxShadow: "var(--shadow-lg)",
+        }}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between border-b px-4 py-3"
           style={{ borderColor: "var(--border)" }}
         >
-          <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          <h2
+            className="text-[11px] font-semibold uppercase tracking-widest"
+            style={{ color: "var(--text-muted)" }}
+          >
             Application Logs
           </h2>
           <div className="flex items-center gap-2">
             <button
               onClick={loadLogs}
-              className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
-              style={{ color: "var(--text-secondary)" }}
+              className="p-1 transition-colors hover:opacity-80"
+              style={{ color: "var(--text-muted)" }}
               title="Refresh logs"
             >
               <RefreshCw size={14} />
@@ -102,20 +108,20 @@ export function LogViewer() {
             {entries.length > 0 && (
               <button
                 onClick={clearLogs}
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
+                className="flex items-center gap-1 px-2 py-1 text-xs transition-colors hover:opacity-80"
                 style={{ color: "var(--error)" }}
                 title="Clear logs"
               >
-                <Trash2 size={14} />
+                <Trash2 size={13} />
                 Clear
               </button>
             )}
             <button
               onClick={close}
-              className="rounded p-1 transition-colors hover:opacity-80"
-              style={{ color: "var(--text-secondary)" }}
+              className="p-1 transition-colors hover:opacity-80"
+              style={{ color: "var(--text-muted)" }}
             >
-              <X size={16} />
+              <X size={15} />
             </button>
           </div>
         </div>
@@ -123,10 +129,10 @@ export function LogViewer() {
         {/* Filters */}
         <div className="flex items-center gap-2 border-b px-4 py-2" style={{ borderColor: "var(--border)" }}>
           <div
-            className="flex items-center gap-2 rounded px-2 py-1 flex-1"
-            style={{ backgroundColor: "var(--bg-secondary)" }}
+            className="flex flex-1 items-center gap-2 px-2 py-1.5"
+            style={{ backgroundColor: "var(--bg-secondary)", border: "1px solid var(--border)" }}
           >
-            <Search size={14} style={{ color: "var(--text-muted)" }} />
+            <Search size={13} style={{ color: "var(--text-muted)" }} />
             <input
               type="text"
               value={searchQuery}
@@ -136,15 +142,16 @@ export function LogViewer() {
               style={{ color: "var(--text-primary)" }}
             />
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-0.5">
             {LEVELS.map((level) => (
               <button
                 key={level}
                 onClick={() => setFilterLevel(level)}
-                className="rounded px-2 py-1 text-xs transition-colors"
+                className="px-2 py-1 text-[11px] font-medium transition-all duration-100"
                 style={{
-                  backgroundColor: filterLevel === level ? "var(--accent)" : "var(--bg-secondary)",
-                  color: filterLevel === level ? "#fff" : "var(--text-secondary)",
+                  backgroundColor: filterLevel === level ? "var(--accent)" : "transparent",
+                  color: filterLevel === level ? "var(--accent-fg)" : "var(--text-muted)",
+                  border: `1px solid ${filterLevel === level ? "var(--accent)" : "var(--border)"}`,
                 }}
               >
                 {level}
@@ -164,9 +171,13 @@ export function LogViewer() {
               {searchQuery || filterLevel !== "ALL" ? "No matching log entries" : "No logs yet"}
             </div>
           ) : (
-            <div className="space-y-0.5">
+            <div className="space-y-px">
               {filtered.map((entry, i) => (
-                <div key={i} className="flex gap-2 rounded px-2 py-1" style={{ backgroundColor: "var(--bg-secondary)" }}>
+                <div
+                  key={i}
+                  className="flex gap-2 px-2 py-1"
+                  style={{ backgroundColor: "var(--bg-secondary)" }}
+                >
                   <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
                     {formatTimestamp(entry.timestamp)}
                   </span>
@@ -192,7 +203,7 @@ export function LogViewer() {
 
         {/* Footer */}
         <div
-          className="border-t px-4 py-2 text-xs"
+          className="font-data border-t px-4 py-2"
           style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
         >
           {entries.length} {entries.length === 1 ? "entry" : "entries"}

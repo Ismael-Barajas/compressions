@@ -1,12 +1,13 @@
 import { useCompressionStore } from "../../stores/compressionStore";
 import type { AudioOutputFormat } from "../../types/compression";
+import { SectionLabel, FieldGroup, ChipButton, SelectInput } from "./VideoControls";
 
-const FORMATS: { value: AudioOutputFormat; label: string; description: string }[] = [
-  { value: "Mp3", label: "MP3", description: "Universal compatibility" },
-  { value: "Aac", label: "AAC", description: "Better quality per bit" },
-  { value: "Opus", label: "Opus", description: "Best at low bitrates" },
-  { value: "Flac", label: "FLAC", description: "Lossless" },
-  { value: "Wav", label: "WAV", description: "Uncompressed" },
+const FORMATS: { value: AudioOutputFormat; label: string }[] = [
+  { value: "Mp3", label: "MP3" },
+  { value: "Aac", label: "AAC" },
+  { value: "Opus", label: "Opus" },
+  { value: "Flac", label: "FLAC" },
+  { value: "Wav", label: "WAV" },
 ];
 
 const BITRATES = ["64k", "96k", "128k", "192k", "256k", "320k"];
@@ -25,47 +26,28 @@ export function AudioControls() {
   const isLossless = options.format === "Flac" || options.format === "Wav";
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        Audio Extraction
-      </h3>
+    <div className="space-y-5">
+      <SectionLabel>Audio Extraction</SectionLabel>
 
       {/* Format */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Format
-        </label>
+      <FieldGroup label="Format">
         <div className="grid grid-cols-3 gap-1.5">
           {FORMATS.map((f) => (
-            <button
+            <ChipButton
               key={f.value}
+              active={options.format === f.value}
               onClick={() => setOptions({ format: f.value })}
-              className="rounded-md border px-2 py-1.5 text-center text-xs transition-colors"
-              style={{
-                borderColor: options.format === f.value ? "var(--accent)" : "var(--border)",
-                backgroundColor: options.format === f.value ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-                color: options.format === f.value ? "var(--accent)" : "var(--text-secondary)",
-              }}
             >
-              <div className="font-medium">{f.label}</div>
-            </button>
+              {f.label}
+            </ChipButton>
           ))}
         </div>
-      </div>
+      </FieldGroup>
 
-      {/* Bitrate (only for lossy formats) */}
+      {/* Bitrate */}
       {!isLossless && (
-        <div>
-          <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-            Bitrate
-          </label>
-          <select
-            className="w-full rounded-md border px-2 py-1.5 text-sm"
-            style={{
-              borderColor: "var(--border)",
-              backgroundColor: "var(--bg-primary)",
-              color: "var(--text-primary)",
-            }}
+        <FieldGroup label="Bitrate">
+          <SelectInput
             value={options.bitrate ?? "192k"}
             onChange={(e) => setOptions({ bitrate: e.target.value })}
           >
@@ -74,22 +56,13 @@ export function AudioControls() {
                 {b}
               </option>
             ))}
-          </select>
-        </div>
+          </SelectInput>
+        </FieldGroup>
       )}
 
       {/* Sample Rate */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Sample Rate
-        </label>
-        <select
-          className="w-full rounded-md border px-2 py-1.5 text-sm"
-          style={{
-            borderColor: "var(--border)",
-            backgroundColor: "var(--bg-primary)",
-            color: "var(--text-primary)",
-          }}
+      <FieldGroup label="Sample Rate">
+        <SelectInput
           value={options.sampleRate ?? "original"}
           onChange={(e) =>
             setOptions({
@@ -102,8 +75,8 @@ export function AudioControls() {
               {s.label}
             </option>
           ))}
-        </select>
-      </div>
+        </SelectInput>
+      </FieldGroup>
     </div>
   );
 }

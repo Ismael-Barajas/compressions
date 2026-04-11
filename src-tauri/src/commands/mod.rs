@@ -8,4 +8,5 @@ pub mod pdf;
 pub mod presets;
 pub mod probe;
 pub mod scan;
+pub mod thumbnail;
 pub mod video;

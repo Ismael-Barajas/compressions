@@ -37,28 +37,31 @@ export function OutputSettings() {
     .replace(/\{time\}/g, "14-30-00") + ".jpg";
 
   return (
-    <div className="mt-auto border-t pt-4" style={{ borderColor: "var(--border)" }}>
-      <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+    <div className="border-t pt-4" style={{ borderColor: "var(--border)" }}>
+      <h3
+        className="mb-3 text-[11px] font-semibold uppercase tracking-widest"
+        style={{ color: "var(--text-muted)" }}
+      >
         Output
       </h3>
 
       {/* Output mode radios */}
-      <div className="mb-3 space-y-1.5">
+      <div className="mb-3 space-y-2">
         {OUTPUT_MODES.map((mode) => (
           <label
             key={mode.value}
-            className="flex cursor-pointer items-center gap-2"
+            className="flex cursor-pointer items-center gap-2.5"
             onClick={() => setOutputMode(mode.value)}
           >
             <div
-              className="flex h-4 w-4 items-center justify-center rounded-full border"
+              className="flex h-3.5 w-3.5 items-center justify-center border"
               style={{
-                borderColor: outputMode === mode.value ? "var(--accent)" : "var(--border)",
+                borderColor: outputMode === mode.value ? "var(--accent)" : "var(--border-hover)",
               }}
             >
               {outputMode === mode.value && (
                 <div
-                  className="h-2 w-2 rounded-full"
+                  className="h-1.5 w-1.5"
                   style={{ backgroundColor: "var(--accent)" }}
                 />
               )}
@@ -78,14 +81,14 @@ export function OutputSettings() {
             value={subfolderName}
             onChange={(e) => setSubfolderName(e.target.value)}
             placeholder="compressed"
-            className="w-full rounded border px-2 py-1 text-xs"
+            className="w-full border px-2 py-1 text-xs"
             style={{
               borderColor: "var(--border)",
               backgroundColor: "var(--bg-tertiary)",
               color: "var(--text-primary)",
             }}
           />
-          <p className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          <p className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
             Created inside each source file's directory
           </p>
         </div>
@@ -97,7 +100,7 @@ export function OutputSettings() {
           onClick={handleChooseFolder}
           className="btn-secondary mb-2 flex w-full items-center gap-2 text-xs"
         >
-          <FolderOpen size={14} />
+          <FolderOpen size={13} />
           <span className="truncate">
             {outputDir || "Choose output folder..."}
           </span>
@@ -105,8 +108,8 @@ export function OutputSettings() {
       )}
 
       {/* Output name template */}
-      <div className="mt-2 border-t pt-2" style={{ borderColor: "var(--border)" }}>
-        <div className="mb-1 flex items-center gap-1">
+      <div className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+        <div className="mb-1 flex items-center gap-1.5">
           <span className="text-[10px] font-medium" style={{ color: "var(--text-secondary)" }}>
             File name format
           </span>
@@ -122,15 +125,15 @@ export function OutputSettings() {
           value={outputTemplate}
           onChange={(e) => setOutputTemplate(e.target.value)}
           placeholder="{name}_compressed"
-          className="w-full rounded border px-2 py-1 text-xs font-mono"
+          className="w-full border px-2 py-1 font-mono text-xs"
           style={{
             borderColor: "var(--border)",
             backgroundColor: "var(--bg-tertiary)",
             color: "var(--text-primary)",
           }}
         />
-        <p className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
-          Preview: <code>{previewName}</code>
+        <p className="mt-1 font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+          {previewName}
         </p>
       </div>
     </div>

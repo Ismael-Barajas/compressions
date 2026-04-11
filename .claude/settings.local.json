@@ -29,7 +29,14 @@
       "Bash(cargo bench:*)",
       "Bash(grep -n \"normalize\\\\|canonicalize\" /Users/ismaelbarajas/Code/GitHub/compressions/src-tauri/src/commands/*.rs)",
       "Bash(grep -v \"^0$\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(cargo clippy:*)",
+      "Bash(ls -la /d/Github/compressions/src/components/*/*.tsx)",
+      "Bash(xargs wc:*)",
+      "Bash(git status:*)"
     ]
+  },
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
   }
 }

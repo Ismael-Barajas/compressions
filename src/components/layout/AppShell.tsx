@@ -134,8 +134,12 @@ export function AppShell() {
           <>
             {isDragOver && (
               <div
-                className="mb-2 rounded-lg border-2 border-dashed p-3 text-center text-sm"
-                style={{ borderColor: "var(--accent)", color: "var(--accent)", backgroundColor: "var(--bg-secondary)" }}
+                className="mb-2 border p-3 text-center text-[13px] font-medium"
+                style={{
+                  borderColor: "var(--accent)",
+                  color: "var(--accent)",
+                  backgroundColor: "var(--accent-glow)",
+                }}
               >
                 Drop files here to add to queue
               </div>

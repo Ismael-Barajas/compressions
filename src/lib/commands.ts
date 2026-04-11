@@ -163,3 +163,15 @@ export async function readLogs(maxLines?: number): Promise<LogEntry[]> {
 export async function clearLogs(): Promise<void> {
   return invoke("clear_logs");
 }
+
+export async function generateThumbnail(path: string): Promise<string | null> {
+  return invoke("generate_thumbnail", { path });
+}
+
+export async function generateThumbnailsBatch(paths: string[]): Promise<[string, string | null][]> {
+  return invoke("generate_thumbnails_batch", { paths });
+}
+
+export async function clearThumbnailCache(): Promise<void> {
+  return invoke("clear_thumbnail_cache");
+}

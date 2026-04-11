@@ -18,7 +18,6 @@ export function CompressTab() {
   const activeCompressTab = useCompressionStore((s) => s.activeCompressTab);
   const setActiveCompressTab = useCompressionStore((s) => s.setActiveCompressTab);
 
-  // Which media types are present in the queue, in stable order
   const availableTabs = useMemo<CompressTabId[]>(() => {
     const present = new Set<CompressTabId>();
     for (const f of files) {
@@ -30,7 +29,6 @@ export function CompressTab() {
     return order.filter((t) => present.has(t));
   }, [files]);
 
-  // Auto-select the first available tab if none is set or the current one is gone
   useEffect(() => {
     if (availableTabs.length === 0) {
       if (activeCompressTab !== null) setActiveCompressTab(null);
@@ -47,14 +45,9 @@ export function CompressTab() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-hidden">
-      {/* Media-type sub-tabs */}
+      {/* Media-type sub-tabs — pill/chip style */}
       {availableTabs.length > 0 && (
-        <div
-          className="flex gap-1 rounded-md border p-1"
-          style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
-          role="tablist"
-          aria-label="Media type"
-        >
+        <div className="flex gap-1" role="tablist" aria-label="Media type">
           {availableTabs.map((tab) => {
             const isActive = currentTab === tab;
             return (
@@ -63,10 +56,11 @@ export function CompressTab() {
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => setActiveCompressTab(tab)}
-                className="flex-1 rounded px-2 py-1 text-xs font-medium transition-colors"
+                className="px-3 py-1 text-xs font-semibold tracking-tight transition-all duration-100"
                 style={{
                   backgroundColor: isActive ? "var(--accent)" : "transparent",
-                  color: isActive ? "var(--accent-fg, white)" : "var(--text-secondary)",
+                  color: isActive ? "var(--accent-fg)" : "var(--text-secondary)",
+                  border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
                 }}
               >
                 {TAB_LABELS[tab]}
@@ -94,9 +88,7 @@ export function CompressTab() {
       </div>
 
       {/* Output settings pinned at bottom */}
-      <div className="border-t pt-4" style={{ borderColor: "var(--border)" }}>
-        <OutputSettings />
-      </div>
+      <OutputSettings />
     </div>
   );
 }

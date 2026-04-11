@@ -1,11 +1,12 @@
 import { useCompressionStore } from "../../stores/compressionStore";
 import type { PdfQuality } from "../../types/compression";
+import { SectionLabel, FieldGroup, SelectInput } from "./VideoControls";
 
 const QUALITY_PRESETS: { value: PdfQuality; label: string; description: string }[] = [
-  { value: "screen", label: "Screen", description: "72 DPI — smallest size" },
-  { value: "ebook", label: "Ebook", description: "150 DPI — good balance" },
-  { value: "printer", label: "Printer", description: "300 DPI — high quality" },
-  { value: "prepress", label: "Prepress", description: "300 DPI — color preserving" },
+  { value: "screen", label: "Screen", description: "72 DPI — smallest" },
+  { value: "ebook", label: "Ebook", description: "150 DPI — balanced" },
+  { value: "printer", label: "Printer", description: "300 DPI — high" },
+  { value: "prepress", label: "Prepress", description: "300 DPI — color" },
 ];
 
 const DPI_OPTIONS = [
@@ -21,47 +22,36 @@ export function PdfControls() {
   const setOptions = useCompressionStore((s) => s.setPdfOptions);
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        PDF Compression
-      </h3>
+    <div className="space-y-5">
+      <SectionLabel>PDF Compression</SectionLabel>
 
       {/* Quality preset */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Quality
-        </label>
+      <FieldGroup label="Quality">
         <div className="grid grid-cols-2 gap-1.5">
-          {QUALITY_PRESETS.map((p) => (
-            <button
-              key={p.value}
-              onClick={() => setOptions({ quality: p.value })}
-              className="rounded-md border px-2 py-1.5 text-left text-xs transition-colors"
-              style={{
-                borderColor: options.quality === p.value ? "var(--accent)" : "var(--border)",
-                backgroundColor: options.quality === p.value ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent",
-                color: options.quality === p.value ? "var(--accent)" : "var(--text-secondary)",
-              }}
-            >
-              <div className="font-medium">{p.label}</div>
-              <div className="mt-0.5 opacity-70">{p.description}</div>
-            </button>
-          ))}
+          {QUALITY_PRESETS.map((p) => {
+            const isActive = options.quality === p.value;
+            return (
+              <button
+                key={p.value}
+                onClick={() => setOptions({ quality: p.value })}
+                className="px-2 py-2 text-left text-xs transition-all duration-100"
+                style={{
+                  border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+                  backgroundColor: isActive ? "var(--accent-glow)" : "transparent",
+                  color: isActive ? "var(--accent)" : "var(--text-secondary)",
+                }}
+              >
+                <div className="font-medium">{p.label}</div>
+                <div className="mt-0.5 opacity-60" style={{ fontSize: "10px" }}>{p.description}</div>
+              </button>
+            );
+          })}
         </div>
-      </div>
+      </FieldGroup>
 
       {/* DPI override */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Image DPI Override
-        </label>
-        <select
-          className="w-full rounded-md border px-2 py-1.5 text-sm"
-          style={{
-            borderColor: "var(--border)",
-            backgroundColor: "var(--bg-primary)",
-            color: "var(--text-primary)",
-          }}
+      <FieldGroup label="Image DPI Override">
+        <SelectInput
           value={options.dpi ?? "default"}
           onChange={(e) =>
             setOptions({
@@ -74,8 +64,8 @@ export function PdfControls() {
               {d.label}
             </option>
           ))}
-        </select>
-      </div>
+        </SelectInput>
+      </FieldGroup>
     </div>
   );
 }
