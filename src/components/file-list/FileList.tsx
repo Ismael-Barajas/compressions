@@ -4,25 +4,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
 import { scanPaths, generateThumbnailsBatch } from "../../lib/commands";
-import { getMediaType, getFileName } from "../../lib/fileUtils";
+import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { FileItem } from "./FileItem";
 
 function addResolvedPaths(paths: string[]) {
-  const newFiles = paths
-    .map((path) => {
-      const mediaType = getMediaType(path);
-      if (!mediaType) return null;
-      return {
-        id: crypto.randomUUID(),
-        path,
-        name: getFileName(path),
-        size: 0,
-        mediaType,
-        status: "queued" as const,
-        progress: 0,
-      };
-    })
-    .filter((f): f is NonNullable<typeof f> => f !== null);
+  const newFiles = pathsToQueuedFiles(paths);
   if (newFiles.length > 0) {
     useCompressionStore.getState().addFiles(newFiles);
   }

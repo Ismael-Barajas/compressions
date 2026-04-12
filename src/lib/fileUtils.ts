@@ -1,4 +1,4 @@
-import type { MediaType } from "../types/compression";
+import type { MediaType, QueuedFile } from "../types/compression";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts",
@@ -59,8 +59,11 @@ export function getOutputFileName(
   const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
   const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
 
+  // Sanitize name to prevent path traversal via crafted filenames
+  const safeName = name.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+
   const baseName = template
-    .replace(/\{name\}/g, name)
+    .replace(/\{name\}/g, safeName)
     .replace(/\{date\}/g, date)
     .replace(/\{time\}/g, time);
 
@@ -99,4 +102,23 @@ export function buildOutputPath(
   const sep = outputDir.includes("\\") ? "\\" : "/";
   const outputName = getOutputFileName(inputPath, format, template);
   return `${outputDir}${sep}${outputName}`;
+}
+
+/** Convert resolved file paths into QueuedFile objects, filtering unsupported types. */
+export function pathsToQueuedFiles(paths: string[]): QueuedFile[] {
+  return paths
+    .map((path) => {
+      const mediaType = getMediaType(path);
+      if (!mediaType) return null;
+      return {
+        id: crypto.randomUUID(),
+        path,
+        name: getFileName(path),
+        size: 0,
+        mediaType,
+        status: "queued" as const,
+        progress: 0,
+      };
+    })
+    .filter((f): f is NonNullable<typeof f> => f !== null);
 }

@@ -255,8 +255,33 @@ pub async fn compress_images_batch(
     for handle in handles {
         match handle.await {
             Ok(Ok(result)) => results.push(result),
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(format!("Task join error: {}", e)),
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "Image task failed at IPC level, continuing batch");
+                // Collect the error as a failed result instead of aborting the entire batch
+                results.push(CompressionResult {
+                    job_id: Uuid::new_v4().to_string(),
+                    input_path: String::new(),
+                    output_path: String::new(),
+                    input_size: 0,
+                    output_size: 0,
+                    duration_ms: 0,
+                    success: false,
+                    error: Some(e),
+                });
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Image task join error, continuing batch");
+                results.push(CompressionResult {
+                    job_id: Uuid::new_v4().to_string(),
+                    input_path: String::new(),
+                    output_path: String::new(),
+                    input_size: 0,
+                    output_size: 0,
+                    duration_ms: 0,
+                    success: false,
+                    error: Some(format!("Task join error: {}", e)),
+                });
+            }
         }
     }
 

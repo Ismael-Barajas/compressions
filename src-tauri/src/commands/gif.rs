@@ -57,13 +57,21 @@ pub async fn convert_video_to_gif(
 
     let palette_args = build_gif_palette_args(&input, &palette_path, &options);
 
-    let (mut rx, _child) = app
+    let (mut rx, palette_child) = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
         .args(&palette_args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg (palette pass): {}", e))?;
+
+    // Store palette pass child for cancellation
+    {
+        let mut app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state
+            .active_jobs
+            .insert(job_id.clone(), (palette_child, output.clone()));
+    }
 
     // Wait for palette pass to complete
     let mut palette_ok = false;
@@ -72,6 +80,11 @@ pub async fn convert_video_to_gif(
             palette_ok = status.code == Some(0);
             break;
         }
+    }
+
+    // Remove palette pass from active jobs
+    if let Ok(mut app_state) = state.lock() {
+        app_state.active_jobs.remove(&job_id);
     }
 
     if !palette_ok {

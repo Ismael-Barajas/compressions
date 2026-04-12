@@ -88,10 +88,11 @@ These rules are drawn from the grug-brained developer philosophy. Take them seri
 After editing any `.rs` file, run:
 
 ```bash
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-Fix all warnings before proceeding.
+Fix all formatting and warnings before proceeding.
 
 ## Phase Completion Checklist
 
@@ -99,6 +100,7 @@ After completing every phase sub-task (e.g. 10.1, 10.2, 11.1):
 
 1. **Verify TypeScript:** run `npx tsc --noEmit` — must pass with zero errors
 2. **Verify Rust:** run `cargo check --manifest-path src-tauri/Cargo.toml` — must pass with zero errors
-3. **Rust lint:** run `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` — must pass with zero warnings
-4. **Update CLAUDE.md:** change `Current Status` to reflect what just completed and what is next
-5. **Update PLAN.md:** mark the completed phase row as ✅ Complete in the Implementation Status table
+3. **Rust format:** run `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` — must pass with no formatting issues
+4. **Rust lint:** run `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` — must pass with zero warnings
+5. **Update CLAUDE.md:** change `Current Status` to reflect what just completed and what is next
+6. **Update PLAN.md:** mark the completed phase row as ✅ Complete in the Implementation Status table

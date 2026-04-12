@@ -74,24 +74,23 @@ pub fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 fn urldecode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
     let bytes = input.as_bytes();
+    let mut raw = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             let hi = bytes[i + 1];
             let lo = bytes[i + 2];
             if hi.is_ascii_hexdigit() && lo.is_ascii_hexdigit() {
-                let val = hex_val(hi) * 16 + hex_val(lo);
-                result.push(val as char);
+                raw.push(hex_val(hi) * 16 + hex_val(lo));
                 i += 3;
                 continue;
             }
         }
-        result.push(bytes[i] as char);
+        raw.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8_lossy(&raw).into_owned()
 }
 
 fn hex_val(b: u8) -> u8 {
@@ -166,5 +165,13 @@ mod tests {
     fn hex_val_invalid() {
         assert_eq!(hex_val(b'g'), 0);
         assert_eq!(hex_val(b'Z'), 0);
+    }
+
+    #[test]
+    fn urldecode_multibyte_utf8() {
+        // "é" is U+00E9, encoded as %C3%A9 in UTF-8
+        assert_eq!(urldecode("/path/caf%C3%A9"), "/path/café");
+        // "日本語" encoded as percent-encoded UTF-8
+        assert_eq!(urldecode("%E6%97%A5%E6%9C%AC%E8%AA%9E"), "日本語");
     }
 }

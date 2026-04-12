@@ -19,9 +19,7 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts",
 ];
 
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "gif",
-];
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "gif"];
 
 fn get_extension(path: &str) -> String {
     Path::new(path)
@@ -56,8 +54,7 @@ async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> 
         thumb
             .write_to(&mut cursor, image::ImageFormat::Jpeg)
             .map_err(|e| format!("Failed to encode thumbnail: {e}"))?;
-        std::fs::write(&out_path, &buf)
-            .map_err(|e| format!("Failed to write thumbnail: {e}"))?;
+        std::fs::write(&out_path, &buf).map_err(|e| format!("Failed to write thumbnail: {e}"))?;
         Ok(())
     })
     .await

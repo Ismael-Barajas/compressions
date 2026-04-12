@@ -68,6 +68,7 @@ interface CompressionStore {
   theme: "light" | "dark";
   showThumbnails: boolean;
   isCompressing: boolean;
+  _activeOps: number;
 
   addFiles: (files: QueuedFile[]) => void;
   removeFile: (id: string) => void;
@@ -94,6 +95,8 @@ interface CompressionStore {
   toggleTheme: () => void;
   toggleThumbnails: () => void;
   setIsCompressing: (value: boolean) => void;
+  startOperation: () => void;
+  endOperation: () => void;
   retryFile: (id: string) => void;
 }
 
@@ -137,6 +140,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   theme: getInitialTheme(),
   showThumbnails: getStoredThumbnails(),
   isCompressing: false,
+  _activeOps: 0,
 
   addFiles: (newFiles) =>
     set((state) => {
@@ -150,7 +154,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
 
   clearFiles: () => {
     clearThumbnailCache().catch(() => {});
-    return set({ files: [], isCompressing: false });
+    return set({ files: [], isCompressing: false, _activeOps: 0 });
   },
 
   setThumbnailPath: (id, thumbnailPath) =>
@@ -267,6 +271,18 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     }),
 
   setIsCompressing: (value) => set({ isCompressing: value }),
+
+  startOperation: () =>
+    set((state) => {
+      const next = state._activeOps + 1;
+      return { _activeOps: next, isCompressing: next > 0 };
+    }),
+
+  endOperation: () =>
+    set((state) => {
+      const next = Math.max(0, state._activeOps - 1);
+      return { _activeOps: next, isCompressing: next > 0 };
+    }),
 
   retryFile: (id) =>
     set((state) => ({

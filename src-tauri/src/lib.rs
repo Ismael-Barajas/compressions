@@ -35,7 +35,9 @@ pub fn run() {
         .setup(|app| {
             // Set window icon explicitly so it shows in dev mode too
             if let Some(window) = app.get_webview_window("main") {
-                window.set_icon(tauri::include_image!("icons/icon.png")).ok();
+                window
+                    .set_icon(tauri::include_image!("icons/icon.png"))
+                    .ok();
             }
 
             let handle = app.handle().clone();

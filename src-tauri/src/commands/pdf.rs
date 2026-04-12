@@ -1,12 +1,14 @@
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Instant;
 
-use tauri::{ipc::Channel, AppHandle, Manager};
+use tauri::{ipc::Channel, AppHandle, Manager, State};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::history::storage as history;
+use crate::state::AppState;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
 };
@@ -85,6 +87,7 @@ fn build_gs_args(
 #[tauri::command]
 pub async fn compress_pdf(
     app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
     input: String,
     output: String,
     options: PdfOptions,
@@ -111,13 +114,21 @@ pub async fn compress_pdf(
     let gs_res_dir = resolve_gs_resource_dir(&app);
     let args = build_gs_args(&input, &output, &options, gs_res_dir.as_deref());
 
-    let (mut rx, _child) = app
+    let (mut rx, child) = app
         .shell()
         .sidecar("gs")
         .map_err(|e| format!("Failed to create Ghostscript sidecar: {}", e))?
         .args(&args)
         .spawn()
         .map_err(|e| format!("Failed to spawn Ghostscript: {}", e))?;
+
+    // Store child handle for cancellation
+    {
+        let mut app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state
+            .active_jobs
+            .insert(job_id.clone(), (child, output.clone()));
+    }
 
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
@@ -127,13 +138,27 @@ pub async fn compress_pdf(
 
     let start = Instant::now();
     let mut stderr_output = String::new();
+    const STDERR_CAP: usize = 4096;
 
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stderr(bytes) => {
-                stderr_output.push_str(&String::from_utf8_lossy(&bytes));
+                if stderr_output.len() < STDERR_CAP {
+                    let chunk = String::from_utf8_lossy(&bytes);
+                    let remaining = STDERR_CAP - stderr_output.len();
+                    if chunk.len() <= remaining {
+                        stderr_output.push_str(&chunk);
+                    } else {
+                        stderr_output.push_str(&chunk[..remaining]);
+                        stderr_output.push_str("... [truncated]");
+                    }
+                }
             }
             CommandEvent::Terminated(status) => {
+                if let Ok(mut app_state) = state.lock() {
+                    app_state.active_jobs.remove(&job_id);
+                }
+
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let mut output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
                 let success = status.code == Some(0);
@@ -271,6 +296,7 @@ mod tests {
 #[tauri::command]
 pub async fn compress_pdfs_batch(
     app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
     files: Vec<BatchEntry>,
     options: PdfOptions,
     on_progress: Channel<ProgressEvent>,
@@ -279,6 +305,7 @@ pub async fn compress_pdfs_batch(
     for entry in files {
         let result = compress_pdf(
             app.clone(),
+            state.clone(),
             entry.input,
             entry.output,
             options.clone(),

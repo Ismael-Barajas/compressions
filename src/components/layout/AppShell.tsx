@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState } from "react";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { probeFile, scanPaths } from "../../lib/commands";
-import { getMediaType, getFileName } from "../../lib/fileUtils";
+import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { useClipboardPaste } from "../../hooks/useClipboardPaste";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { DropZone } from "../dropzone/DropZone";
@@ -10,7 +10,6 @@ import { Sidebar } from "./Sidebar";
 import { ResultsSummary } from "../output/ResultsSummary";
 import { HistoryPanel } from "../history/HistoryPanel";
 import { LogViewer } from "../logs/LogViewer";
-import type { QueuedFile } from "../../types/compression";
 
 export function AppShell() {
   const files = useCompressionStore((s) => s.files);
@@ -22,44 +21,12 @@ export function AppShell() {
     async (paths: string[]) => {
       try {
         const resolvedPaths = await scanPaths(paths);
-        const validFiles: QueuedFile[] = [];
-        for (const path of resolvedPaths) {
-          const mediaType = getMediaType(path);
-          if (mediaType) {
-            validFiles.push({
-              id: crypto.randomUUID(),
-              path,
-              name: getFileName(path),
-              size: 0,
-              mediaType,
-              status: "queued",
-              progress: 0,
-            });
-          }
-        }
-        if (validFiles.length > 0) {
-          addFiles(validFiles);
-        }
+        const newFiles = pathsToQueuedFiles(resolvedPaths);
+        if (newFiles.length > 0) addFiles(newFiles);
       } catch {
-        // Fallback: process paths locally
-        const validFiles: QueuedFile[] = [];
-        for (const path of paths) {
-          const mediaType = getMediaType(path);
-          if (mediaType) {
-            validFiles.push({
-              id: crypto.randomUUID(),
-              path,
-              name: getFileName(path),
-              size: 0,
-              mediaType,
-              status: "queued",
-              progress: 0,
-            });
-          }
-        }
-        if (validFiles.length > 0) {
-          addFiles(validFiles);
-        }
+        // Fallback: process paths locally without scanning
+        const newFiles = pathsToQueuedFiles(paths);
+        if (newFiles.length > 0) addFiles(newFiles);
       }
     },
     [addFiles],

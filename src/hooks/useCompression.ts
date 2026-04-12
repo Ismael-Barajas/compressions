@@ -19,7 +19,8 @@ export function useCompression() {
   const updateProgress = useCompressionStore((s) => s.updateProgress);
   const markComplete = useCompressionStore((s) => s.markComplete);
   const markError = useCompressionStore((s) => s.markError);
-  const setIsCompressing = useCompressionStore((s) => s.setIsCompressing);
+  const startOperation = useCompressionStore((s) => s.startOperation);
+  const endOperation = useCompressionStore((s) => s.endOperation);
 
   const startCompression = useCallback(async () => {
     const { outputDir, outputMode } = useCompressionStore.getState();
@@ -32,7 +33,7 @@ export function useCompression() {
       return;
     }
 
-    setIsCompressing(true);
+    startOperation();
 
     try {
       // Drain-loop: keep processing until no queued files remain.
@@ -231,9 +232,9 @@ export function useCompression() {
         await Promise.allSettled(promises);
       }
     } finally {
-      setIsCompressing(false);
+      endOperation();
     }
-  }, [setFileStatus, updateProgress, markComplete, markError, setIsCompressing]);
+  }, [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation]);
 
   const cancelFile = useCallback(
     async (fileId: string) => {
@@ -285,7 +286,7 @@ export function useCompression() {
       const audioExt = getAudioExtension(audioOptions.format);
       const output = buildOutputPath(file.path, outDir, audioExt, outputTemplate);
 
-      setIsCompressing(true);
+      startOperation();
       setFileStatus(file.id, "processing", undefined);
 
       const channel = new Channel<ProgressEvent>();
@@ -317,10 +318,10 @@ export function useCompression() {
           ),
         }));
       } finally {
-        setIsCompressing(false);
+        endOperation();
       }
     },
-    [setFileStatus, updateProgress, markComplete, markError, setIsCompressing],
+    [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation],
   );
 
   const convertToGif = useCallback(
@@ -353,7 +354,7 @@ export function useCompression() {
 
       const output = buildOutputPath(file.path, outDir, "gif", outputTemplate);
 
-      setIsCompressing(true);
+      startOperation();
       setFileStatus(file.id, "processing", undefined);
 
       const channel = new Channel<ProgressEvent>();
@@ -385,10 +386,10 @@ export function useCompression() {
           ),
         }));
       } finally {
-        setIsCompressing(false);
+        endOperation();
       }
     },
-    [setFileStatus, updateProgress, markComplete, markError, setIsCompressing],
+    [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation],
   );
 
   const extractAudioFromAll = useCallback(async () => {
@@ -401,7 +402,7 @@ export function useCompression() {
     );
     if (videoFiles.length === 0) return;
 
-    setIsCompressing(true);
+    startOperation();
 
     const audioExt = getAudioExtension(audioOptions.format);
     const batch = videoFiles.map((f) => {
@@ -462,9 +463,9 @@ export function useCompression() {
         }
       }
     } finally {
-      setIsCompressing(false);
+      endOperation();
     }
-  }, [setFileStatus, updateProgress, markComplete, markError, setIsCompressing]);
+  }, [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation]);
 
   const convertAllToGif = useCallback(async () => {
     const {
@@ -476,7 +477,7 @@ export function useCompression() {
     );
     if (videoFiles.length === 0) return;
 
-    setIsCompressing(true);
+    startOperation();
 
     const batch = videoFiles.map((f) => {
       const parentDir = getParentDir(f.path);
@@ -536,9 +537,9 @@ export function useCompression() {
         }
       }
     } finally {
-      setIsCompressing(false);
+      endOperation();
     }
-  }, [setFileStatus, updateProgress, markComplete, markError, setIsCompressing]);
+  }, [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation]);
 
   return { startCompression, cancelFile, extractAudioFromFile, convertToGif, extractAudioFromAll, convertAllToGif };
 }

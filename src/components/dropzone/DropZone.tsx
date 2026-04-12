@@ -1,28 +1,13 @@
 import { Upload, FolderOpen } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
-import { getMediaType, getFileName } from "../../lib/fileUtils";
+import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { scanPaths } from "../../lib/commands";
-import type { QueuedFile } from "../../types/compression";
 
 async function addResolvedPaths(paths: string[]) {
   const resolvedPaths = await scanPaths(paths);
-  const validFiles: QueuedFile[] = [];
-  for (const path of resolvedPaths) {
-    const mediaType = getMediaType(path);
-    if (mediaType) {
-      validFiles.push({
-        id: crypto.randomUUID(),
-        path,
-        name: getFileName(path),
-        size: 0,
-        mediaType,
-        status: "queued",
-        progress: 0,
-      });
-    }
-  }
-  if (validFiles.length > 0) {
-    useCompressionStore.getState().addFiles(validFiles);
+  const newFiles = pathsToQueuedFiles(resolvedPaths);
+  if (newFiles.length > 0) {
+    useCompressionStore.getState().addFiles(newFiles);
   }
 }
 
