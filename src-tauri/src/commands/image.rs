@@ -97,6 +97,11 @@ pub async fn compress_image(
 
     let start = Instant::now();
 
+    // Resolve Original → concrete format using the real input path (before AVIF temp substitution)
+    let effective_format = options.format.resolve_for_input(&input);
+    let mut resolved_options = options.clone();
+    resolved_options.format = effective_format.clone();
+
     // If input is AVIF, decode via FFmpeg to a temp PNG first (image crate can't decode AVIF)
     let avif_temp = if is_avif_input(&input) {
         Some(decode_avif_via_ffmpeg(&app, &input).await?)
@@ -106,16 +111,17 @@ pub async fn compress_image(
     let effective_input = avif_temp.as_deref().unwrap_or(&input);
 
     // AVIF with metadata preservation routes through FFmpeg sidecar
-    let needs_ffmpeg_avif = matches!(options.format, ImageFormat::Avif) && !options.strip_metadata;
+    let needs_ffmpeg_avif =
+        matches!(effective_format, ImageFormat::Avif) && !resolved_options.strip_metadata;
 
     let compression_result = if needs_ffmpeg_avif {
         // For AVIF output with metadata, use original input (FFmpeg handles the full pipeline)
-        compress_avif_with_ffmpeg(&app, &input, &output, options.quality).await
+        compress_avif_with_ffmpeg(&app, &input, &output, resolved_options.quality).await
     } else {
         let input_for_compress = effective_input.to_string();
         let output_clone = output.clone();
         tokio::task::spawn_blocking(move || {
-            img_compress::compress(&input_for_compress, &output_clone, &options)
+            img_compress::compress(&input_for_compress, &output_clone, &resolved_options)
         })
         .await
         .map_err(|e| format!("Task join error: {}", e))?

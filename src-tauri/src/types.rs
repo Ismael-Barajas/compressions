@@ -22,6 +22,34 @@ pub enum ImageFormat {
     WebP,
     Avif,
     Gif,
+    Original,
+}
+
+impl ImageFormat {
+    /// Resolve `Original` to a concrete format based on the input file extension.
+    /// BMP/TIFF have no output encoder — fall back to PNG (lossless).
+    /// Returns self unchanged for concrete formats.
+    pub fn resolve_for_input(&self, input_path: &str) -> ImageFormat {
+        match self {
+            ImageFormat::Original => {
+                let ext = std::path::Path::new(input_path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                match ext.as_str() {
+                    "jpg" | "jpeg" => ImageFormat::Jpeg,
+                    "png" => ImageFormat::Png,
+                    "webp" => ImageFormat::WebP,
+                    "avif" => ImageFormat::Avif,
+                    "gif" => ImageFormat::Gif,
+                    // BMP, TIFF, unknown → lossless PNG fallback
+                    _ => ImageFormat::Png,
+                }
+            }
+            other => other.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,12 +138,22 @@ pub struct VideoOptions {
     pub hw_encoder: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ResizeMode {
+    #[default]
+    Fit,
+    Exact,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageOptions {
     pub format: ImageFormat,
     pub quality: u8,
     pub resize: Option<Resolution>,
+    #[serde(default)]
+    pub resize_mode: ResizeMode,
     pub strip_metadata: bool,
 }
 

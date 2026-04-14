@@ -33,7 +33,8 @@
       "Bash(cargo clippy:*)",
       "Bash(ls -la /d/Github/compressions/src/components/*/*.tsx)",
       "Bash(xargs wc:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(cargo fmt:*)"
     ]
   },
   "enabledPlugins": {

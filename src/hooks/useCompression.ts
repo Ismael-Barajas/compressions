@@ -129,11 +129,20 @@ export function useCompression() {
         if (imageFiles.length > 0) {
           promises.push(
             (async () => {
-              const imageFormat = imageOptions.format.toLowerCase();
-              const imageBatch = imageFiles.map((f) => ({
-                input: f.path,
-                output: buildOutputPath(f.path, getOutputDirForFile(f), imageFormat, outputTemplate),
-              }));
+              const imageBatch = imageFiles.map((f) => {
+                let format: string | undefined;
+                if (imageOptions.format === "Original") {
+                  const ext = f.path.slice(f.path.lastIndexOf(".")).toLowerCase();
+                  const keepExt = [".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"];
+                  format = keepExt.includes(ext) ? undefined : "png";
+                } else {
+                  format = imageOptions.format.toLowerCase();
+                }
+                return {
+                  input: f.path,
+                  output: buildOutputPath(f.path, getOutputDirForFile(f), format, outputTemplate),
+                };
+              });
 
               const channel = new Channel<ProgressEvent>();
               channel.onmessage = (event: ProgressEvent) => {

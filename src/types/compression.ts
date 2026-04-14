@@ -3,7 +3,7 @@ export type MediaType = "video" | "image" | "pdf";
 export type VideoCodec = "H264" | "H265" | "AV1";
 export type AudioCodec = "AAC" | "Opus" | "Copy" | "None";
 
-export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif" | "Gif";
+export type ImageFormat = "Jpeg" | "Png" | "WebP" | "Avif" | "Gif" | "Original";
 
 export type AudioOutputFormat = "Mp3" | "Aac" | "Flac" | "Opus" | "Wav";
 
@@ -48,10 +48,13 @@ export interface VideoOptions {
   audioBitrate: string | null;
 }
 
+export type ResizeMode = "fit" | "exact";
+
 export interface ImageOptions {
   format: ImageFormat;
   quality: number;
   resize: Resolution | null;
+  resizeMode: ResizeMode;
   stripMetadata: boolean;
 }
 

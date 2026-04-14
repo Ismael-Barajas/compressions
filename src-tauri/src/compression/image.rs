@@ -3,7 +3,7 @@ use std::path::Path;
 use image::imageops::FilterType;
 use image::DynamicImage;
 
-use crate::types::{ImageFormat, ImageOptions};
+use crate::types::{ImageFormat, ImageOptions, ResizeMode};
 
 pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(), String> {
     // GIF inputs always re-encode as animated GIF regardless of the selected format
@@ -21,19 +21,40 @@ pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(),
 
     // Resize if requested
     let img = if let Some(ref resize) = options.resize {
-        img.resize(resize.width, resize.height, FilterType::Lanczos3)
+        match options.resize_mode {
+            ResizeMode::Fit => {
+                let w = if resize.width > 0 {
+                    resize.width
+                } else {
+                    u32::MAX
+                };
+                let h = if resize.height > 0 {
+                    resize.height
+                } else {
+                    u32::MAX
+                };
+                img.resize(w, h, FilterType::Lanczos3)
+            }
+            ResizeMode::Exact => {
+                img.resize_exact(resize.width, resize.height, FilterType::Lanczos3)
+            }
+        }
     } else {
         img
     };
 
     let preserve = !options.strip_metadata;
 
-    match options.format {
+    // Resolve Original → concrete format (defensive; commands layer resolves first)
+    let effective_format = options.format.resolve_for_input(input);
+
+    match effective_format {
         ImageFormat::Jpeg => encode_jpeg(&img, input, output, options.quality, preserve),
         ImageFormat::Png => encode_png(&img, output, preserve),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
         ImageFormat::Avif => encode_avif(&img, output, options.quality),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
+        ImageFormat::Original => unreachable!("resolve_for_input always returns concrete format"),
     }
 }
 
@@ -299,7 +320,7 @@ fn encode_gif(input: &str, output: &str, quality: u8) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Resolution;
+    use crate::types::{ResizeMode, Resolution};
 
     /// Create a test image in memory and save it to `path`.
     fn create_test_image(path: &str, width: u32, height: u32) {
@@ -314,6 +335,7 @@ mod tests {
             format,
             quality: 80,
             resize: None,
+            resize_mode: ResizeMode::Fit,
             strip_metadata: true,
         }
     }
@@ -409,6 +431,7 @@ mod tests {
                 width: 50,
                 height: 50,
             }),
+            resize_mode: ResizeMode::Fit,
             strip_metadata: true,
         };
 
@@ -418,6 +441,58 @@ mod tests {
         // 200x100 resized to fit 50x50 → 50x25 (aspect preserved)
         assert!(dims.0 <= 50);
         assert!(dims.1 <= 50);
+    }
+
+    #[test]
+    fn resize_fit_single_dimension() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.jpg");
+        create_test_image(input.to_str().unwrap(), 200, 100);
+
+        let opts = ImageOptions {
+            format: ImageFormat::Jpeg,
+            quality: 80,
+            resize: Some(Resolution {
+                width: 80,
+                height: 0,
+            }),
+            resize_mode: ResizeMode::Fit,
+            strip_metadata: true,
+        };
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();
+
+        let dims = image::image_dimensions(&output).unwrap();
+        // 200x100 scaled to width 80 → 80x40
+        assert_eq!(dims.0, 80);
+        assert_eq!(dims.1, 40);
+    }
+
+    #[test]
+    fn resize_exact_forces_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.png");
+        let output = dir.path().join("output.jpg");
+        create_test_image(input.to_str().unwrap(), 200, 100);
+
+        let opts = ImageOptions {
+            format: ImageFormat::Jpeg,
+            quality: 80,
+            resize: Some(Resolution {
+                width: 50,
+                height: 50,
+            }),
+            resize_mode: ResizeMode::Exact,
+            strip_metadata: true,
+        };
+
+        compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();
+
+        let dims = image::image_dimensions(&output).unwrap();
+        // Exact mode: should be exactly 50x50 regardless of aspect ratio
+        assert_eq!(dims.0, 50);
+        assert_eq!(dims.1, 50);
     }
 
     #[test]
@@ -432,6 +507,7 @@ mod tests {
                 format: ImageFormat::Jpeg,
                 quality: q,
                 resize: None,
+                resize_mode: ResizeMode::Fit,
                 strip_metadata: true,
             };
             compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Video, Image, FileText, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { QueuedFile } from "../../types/compression";
@@ -90,15 +91,27 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
       {file.duration != null && file.duration > 0 && (
         <span>{Math.floor(file.duration / 60)}:{String(Math.floor(file.duration % 60)).padStart(2, "0")}</span>
       )}
-      {file.result && file.result.success && (
-        file.result.outputSize >= file.result.inputSize ? (
+      {file.result && file.result.success && (() => {
+        const ext = file.result.outputPath.split(".").pop()?.toLowerCase();
+        const isAudio = ["mp3", "m4a", "flac", "opus", "wav"].includes(ext ?? "");
+        const isGif = ext === "gif" && file.mediaType === "video";
+        const isConversion = isAudio || isGif;
+
+        if (isConversion) {
+          return (
+            <span style={{ color: "var(--success)" }}>
+              → {formatFileSize(file.result.outputSize)} ({isAudio ? "audio" : "GIF"})
+            </span>
+          );
+        }
+        return file.result.outputSize >= file.result.inputSize ? (
           <span style={{ color: "var(--text-muted)" }}>Already optimized</span>
         ) : (
           <span style={{ color: "var(--success)" }}>
             → {formatFileSize(file.result.outputSize)} ({getSavingsPercent(file.result.inputSize, file.result.outputSize)}%)
           </span>
-        )
-      )}
+        );
+      })()}
       {file.error && (
         <span style={{ color: "var(--error)" }}>{file.error}</span>
       )}
@@ -158,11 +171,11 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
     <>
       <div
         className={`border p-3 transition-all duration-150 ${accentClass}`}
+        onContextMenu={handleContextMenu}
         style={{
           borderColor: "var(--border)",
           backgroundColor: "var(--bg-secondary)",
         }}
-        onContextMenu={handleContextMenu}
       >
         <div className="flex items-center gap-3">
           {/* Thumbnail or icon */}
@@ -173,18 +186,17 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
                 backgroundColor: "var(--bg-tertiary)",
                 width: 96,
                 height: 72,
+                ...(thumbnailSrc
+                  ? {
+                      backgroundImage: `url(${thumbnailSrc})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                      animation: "fade-in 0.2s ease",
+                    }
+                  : {}),
               }}
             >
-              {thumbnailSrc ? (
-                <img
-                  src={thumbnailSrc}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  style={{ animation: "fade-in 0.2s ease" }}
-                />
-              ) : (
-                <MediaIcon mediaType={file.mediaType} size={24} />
-              )}
+              {!thumbnailSrc && <MediaIcon mediaType={file.mediaType} size={24} />}
             </div>
           ) : (
             <div
@@ -218,8 +230,8 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
         {progressBar}
       </div>
 
-      {/* Context menu */}
-      {contextMenu && (
+      {/* Context menu — portalled to body to escape virtualizer transform context */}
+      {contextMenu && createPortal(
         <div
           ref={menuRef}
           className="fixed z-50 border py-1"
@@ -240,7 +252,8 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
             <Film size={13} />
             Convert to GIF
           </ContextMenuItem>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

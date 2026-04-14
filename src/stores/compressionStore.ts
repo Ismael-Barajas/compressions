@@ -27,6 +27,7 @@ const DEFAULT_IMAGE_OPTIONS: ImageOptions = {
   format: "Jpeg",
   quality: 80,
   resize: null,
+  resizeMode: "fit",
   stripMetadata: true,
 };
 
