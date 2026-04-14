@@ -7,7 +7,7 @@
 All implementation phases complete. Deferred work:
 
 - ~~**Phase 6** — Custom app icons~~ ✅ Complete
-- **Phase 7** — CI/CD release workflow & code signing
+- ~~**Phase 7** — CI/CD release workflow & auto-updater~~ ✅ Complete (code signing deferred — no Apple/Windows certs yet)
 - **Phase 14** — Document-to-Markdown via Pandoc sidecar (see [Deferred: Document-to-Markdown](#deferred-document-to-markdown-pandoc-sidecar) below)
 
 ## Key Design Decisions

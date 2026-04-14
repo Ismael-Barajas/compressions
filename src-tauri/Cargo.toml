@@ -1,6 +1,6 @@
 [package]
 name = "compressions"
-version = "0.1.0"
+version = "1.0.0"
 description = "A cross-platform video and image compression tool"
 authors = []
 edition = "2021"
@@ -38,6 +38,10 @@ tracing-appender = "0.2"
 dirs-next = "2"
 arboard = "3"
 chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

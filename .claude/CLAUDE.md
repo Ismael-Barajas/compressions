@@ -8,7 +8,7 @@ Desktop media compression app. Tauri v2 + React + TypeScript frontend, Rust back
 
 **See [PLAN.md](PLAN.md) for full implementation plan and progress tracking.**
 
-All phases complete, including Phase 6 (custom app icons). Deferred work: Phase 7 (CI/CD & code signing), Phase 14 (Document-to-Markdown via Pandoc sidecar — see PLAN.md).
+All phases complete, including Phase 7 (CI/CD release workflow & auto-updater). Code signing deferred (no Apple/Windows certs yet). Deferred work: Phase 14 (Document-to-Markdown via Pandoc sidecar — see PLAN.md).
 
 ## Stack
 
