@@ -1,7 +1,8 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useCompressionStore } from "../../stores/compressionStore";
-import { probeFile, scanPaths } from "../../lib/commands";
+import { probeFilesBatch, scanPaths } from "../../lib/commands";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
+import type { Resolution } from "../../types/compression";
 import { useClipboardPaste } from "../../hooks/useClipboardPaste";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { DropZone } from "../dropzone/DropZone";
@@ -14,7 +15,7 @@ import { LogViewer } from "../logs/LogViewer";
 export function AppShell() {
   const files = useCompressionStore((s) => s.files);
   const addFiles = useCompressionStore((s) => s.addFiles);
-  const updateFileProbe = useCompressionStore((s) => s.updateFileProbe);
+  const updateFileProbes = useCompressionStore((s) => s.updateFileProbes);
   const [isDragOver, setIsDragOver] = useState(false);
 
   const processFilePaths = useCallback(
@@ -70,21 +71,52 @@ export function AppShell() {
     };
   }, [processFilePaths]);
 
-  // Probe newly added files to populate their size
+  // Track which files have already been sent for probing to avoid re-probing
+  const probedPathsRef = useRef(new Set<string>());
+  const probeBufferRef = useRef<Array<{ id: string; info: { size: number; resolution?: Resolution | null; duration?: number | null } }>>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Probe newly added files — batched with concurrency control
   useEffect(() => {
-    const unprobed = files.filter((f) => f.size === 0 && f.status === "queued");
-    for (const file of unprobed) {
-      probeFile(file.path)
-        .then((info) => updateFileProbe(file.id, {
-          size: info.size,
-          resolution: info.resolution,
-          duration: info.duration,
-        }))
-        .catch(() => {
-          // Non-fatal — file is still compressible without size info
-        });
+    const unprobed = files.filter(
+      (f) => f.size === 0 && f.status === "queued" && !probedPathsRef.current.has(f.path),
+    );
+    if (unprobed.length === 0) return;
+
+    // Build path→id map for resolving probe results
+    const pathToId = new Map(unprobed.map((f) => [f.path, f.id]));
+    const paths = unprobed.map((f) => f.path);
+
+    // Mark all as in-flight immediately to prevent re-probing
+    for (const p of paths) {
+      probedPathsRef.current.add(p);
     }
-  }, [files, updateFileProbe]);
+
+    probeFilesBatch(paths, (event) => {
+      const id = pathToId.get(event.path);
+      if (!id) return;
+
+      probeBufferRef.current.push({
+        id,
+        info: {
+          size: event.size,
+          resolution: event.resolution,
+          duration: event.duration,
+        },
+      });
+
+      // Debounce: flush buffer to store every 150ms
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = setTimeout(() => {
+        if (probeBufferRef.current.length > 0) {
+          updateFileProbes([...probeBufferRef.current]);
+          probeBufferRef.current = [];
+        }
+      }, 150);
+    }).catch(() => {
+      // Non-fatal — files are still compressible without size info
+    });
+  }, [files, updateFileProbes]);
   const hasFiles = files.length > 0;
   const allComplete = hasFiles && files.every((f) => f.status === "complete" || f.status === "error");
 
