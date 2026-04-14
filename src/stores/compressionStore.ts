@@ -79,6 +79,7 @@ interface CompressionStore {
   markError: (jobId: string, message: string) => void;
   setFileStatus: (id: string, status: QueuedFile["status"], jobId?: string) => void;
   updateFileProbe: (id: string, info: { size: number; resolution?: Resolution | null; duration?: number | null }) => void;
+  updateFileProbes: (updates: Array<{ id: string; info: { size: number; resolution?: Resolution | null; duration?: number | null } }>) => void;
   setThumbnailPath: (id: string, thumbnailPath: string) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
@@ -173,6 +174,23 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
           : f,
       ),
     })),
+
+  updateFileProbes: (updates) =>
+    set((state) => {
+      const updateMap = new Map(updates.map((u) => [u.id, u.info]));
+      return {
+        files: state.files.map((f) => {
+          const info = updateMap.get(f.id);
+          if (!info) return f;
+          return {
+            ...f,
+            size: info.size,
+            resolution: info.resolution ?? f.resolution,
+            duration: info.duration ?? f.duration,
+          };
+        }),
+      };
+    }),
 
   updateProgress: (jobId, payload) =>
     set((state) => ({
