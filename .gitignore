@@ -40,3 +40,4 @@ test_folder/
 # Claude Code / internal planning
 .claude/
 docs/superpowers/
+scripts/setup-github-protection.sh
