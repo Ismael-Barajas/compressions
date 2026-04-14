@@ -78,6 +78,17 @@ export function AppShell() {
 
   // Probe newly added files — batched with concurrency control
   useEffect(() => {
+    // Reset probe tracking when all files are cleared so re-adding works
+    if (files.length === 0) {
+      probedPathsRef.current.clear();
+      probeBufferRef.current = [];
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      return;
+    }
+
     const unprobed = files.filter(
       (f) => f.size === 0 && f.status === "queued" && !probedPathsRef.current.has(f.path),
     );
@@ -116,6 +127,13 @@ export function AppShell() {
     }).catch(() => {
       // Non-fatal — files are still compressible without size info
     });
+
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    };
   }, [files, updateFileProbes]);
   const hasFiles = files.length > 0;
   const allComplete = hasFiles && files.every((f) => f.status === "complete" || f.status === "error");
