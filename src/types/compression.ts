@@ -89,6 +89,13 @@ export interface FileInfo {
   codecName: string | null;
 }
 
+export interface ProbeEvent {
+  path: string;
+  size: number;
+  resolution: Resolution | null;
+  duration: number | null;
+}
+
 export interface QueuedFile {
   id: string;
   path: string;
