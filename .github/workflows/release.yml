@@ -118,19 +118,28 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           TARGET="x86_64-unknown-linux-gnu"
-          sudo apt-get install -y ghostscript
-          GS_BIN=$(which gs)
-          cp "$GS_BIN" "src-tauri/binaries/gs-$TARGET"
+          GS_VERSION="10.07.0"
+          GS_VERSION_NODOTS="10070"
+          # Download official pre-built Linux binary (matches Windows/macOS resource set)
+          curl -L "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs${GS_VERSION_NODOTS}/ghostscript-${GS_VERSION}-linux-x86_64.tgz" -o /tmp/gs-linux.tgz
+          tar xf /tmp/gs-linux.tgz -C /tmp
+          EXTRACT_DIR=$(find /tmp -maxdepth 1 -type d -name "ghostscript-*" | head -1)
+          # Copy the gs binary
+          cp "$EXTRACT_DIR/gs-${GS_VERSION}-linux-x86_64/gs" "src-tauri/binaries/gs-$TARGET"
           chmod +x "src-tauri/binaries/gs-$TARGET"
-          # Copy Ghostscript resource files from system installation
-          GS_VER=$(gs --version)
-          GS_SHARE_DIR="/usr/share/ghostscript/$GS_VER"
+          # Copy Ghostscript resource files (fonts, init scripts, ICC profiles)
+          GS_SHARE_DIR="$EXTRACT_DIR/gs-${GS_VERSION}-linux-x86_64/share/ghostscript/${GS_VERSION}"
           if [ -d "$GS_SHARE_DIR" ]; then
+            rm -rf src-tauri/binaries/gs-res
             mkdir -p src-tauri/binaries/gs-res
             cp -R "$GS_SHARE_DIR/Resource" src-tauri/binaries/gs-res/
             [ -d "$GS_SHARE_DIR/lib" ] && cp -R "$GS_SHARE_DIR/lib" src-tauri/binaries/gs-res/
             [ -d "$GS_SHARE_DIR/iccprofiles" ] && cp -R "$GS_SHARE_DIR/iccprofiles" src-tauri/binaries/gs-res/
+          else
+            echo "Warning: Could not find share dir at $GS_SHARE_DIR, listing extracted contents:"
+            find "$EXTRACT_DIR" -maxdepth 3 -type d
           fi
+          rm -rf /tmp/gs-linux.tgz "$EXTRACT_DIR"
           ls -la src-tauri/binaries/
 
       # ── Build & Release ──────────────────────────────────────────────
