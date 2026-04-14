@@ -3,6 +3,7 @@ import type {
   VideoOptions,
   ImageOptions,
   AudioExtractionOptions,
+  AudioCompressionOptions,
   GifConversionOptions,
   PdfOptions,
   CompressionResult,
@@ -100,6 +101,23 @@ export async function extractAudioBatch(
   onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult[]> {
   return invoke("extract_audio_batch", { files, options, onProgress });
+}
+
+export async function compressAudio(
+  input: string,
+  output: string,
+  options: AudioCompressionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult> {
+  return invoke("compress_audio", { input, output, options, onProgress });
+}
+
+export async function compressAudioBatch(
+  files: BatchEntry[],
+  options: AudioCompressionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult[]> {
+  return invoke("compress_audio_batch", { files, options, onProgress });
 }
 
 export async function convertVideoToGif(

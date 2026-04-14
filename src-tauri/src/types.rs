@@ -70,6 +70,54 @@ pub struct AudioExtractionOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AudioCompressionFormat {
+    Original,
+    Mp3,
+    Aac,
+    Flac,
+    Opus,
+    Wav,
+}
+
+impl AudioCompressionFormat {
+    /// Resolve `Original` to a concrete `AudioOutputFormat` based on the input file extension.
+    /// Formats without a matching encoder fall back to MP3.
+    pub fn resolve_for_input(&self, input_path: &str) -> AudioOutputFormat {
+        match self {
+            AudioCompressionFormat::Original => {
+                let ext = std::path::Path::new(input_path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                match ext.as_str() {
+                    "mp3" => AudioOutputFormat::Mp3,
+                    "aac" | "m4a" => AudioOutputFormat::Aac,
+                    "flac" => AudioOutputFormat::Flac,
+                    "ogg" | "opus" => AudioOutputFormat::Opus,
+                    "wav" | "pcm" => AudioOutputFormat::Wav,
+                    // WMA, AIFF, APE, ALAC, AC3, DTS, AMR, unknown → lossy MP3 fallback
+                    _ => AudioOutputFormat::Mp3,
+                }
+            }
+            AudioCompressionFormat::Mp3 => AudioOutputFormat::Mp3,
+            AudioCompressionFormat::Aac => AudioOutputFormat::Aac,
+            AudioCompressionFormat::Flac => AudioOutputFormat::Flac,
+            AudioCompressionFormat::Opus => AudioOutputFormat::Opus,
+            AudioCompressionFormat::Wav => AudioOutputFormat::Wav,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioCompressionOptions {
+    pub format: AudioCompressionFormat,
+    pub bitrate: Option<String>,
+    pub sample_rate: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DitherMode {
     #[serde(rename = "bayer")]
     Bayer,
@@ -115,6 +163,8 @@ pub enum MediaType {
     Image,
     #[serde(rename = "pdf")]
     Pdf,
+    #[serde(rename = "audio")]
+    Audio,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,4 +320,78 @@ pub struct Preset {
     pub media_type: MediaType,
     pub video_options: Option<VideoOptions>,
     pub image_options: Option<ImageOptions>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_compression_format_resolve_known() {
+        let original = AudioCompressionFormat::Original;
+        assert!(matches!(
+            original.resolve_for_input("song.mp3"),
+            AudioOutputFormat::Mp3
+        ));
+        assert!(matches!(
+            original.resolve_for_input("track.aac"),
+            AudioOutputFormat::Aac
+        ));
+        assert!(matches!(
+            original.resolve_for_input("track.m4a"),
+            AudioOutputFormat::Aac
+        ));
+        assert!(matches!(
+            original.resolve_for_input("album.flac"),
+            AudioOutputFormat::Flac
+        ));
+        assert!(matches!(
+            original.resolve_for_input("podcast.ogg"),
+            AudioOutputFormat::Opus
+        ));
+        assert!(matches!(
+            original.resolve_for_input("voice.opus"),
+            AudioOutputFormat::Opus
+        ));
+        assert!(matches!(
+            original.resolve_for_input("raw.wav"),
+            AudioOutputFormat::Wav
+        ));
+        assert!(matches!(
+            original.resolve_for_input("raw.pcm"),
+            AudioOutputFormat::Wav
+        ));
+    }
+
+    #[test]
+    fn audio_compression_format_resolve_fallback() {
+        let original = AudioCompressionFormat::Original;
+        // Niche formats fall back to MP3
+        for ext in &["wma", "aiff", "ape", "alac", "ac3", "dts", "amr"] {
+            assert!(
+                matches!(
+                    original.resolve_for_input(&format!("file.{}", ext)),
+                    AudioOutputFormat::Mp3
+                ),
+                "expected MP3 fallback for .{}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn audio_compression_format_concrete_passthrough() {
+        assert!(matches!(
+            AudioCompressionFormat::Aac.resolve_for_input("anything.xyz"),
+            AudioOutputFormat::Aac
+        ));
+        assert!(matches!(
+            AudioCompressionFormat::Flac.resolve_for_input("anything.xyz"),
+            AudioOutputFormat::Flac
+        ));
+        assert!(matches!(
+            AudioCompressionFormat::Wav.resolve_for_input("anything.xyz"),
+            AudioOutputFormat::Wav
+        ));
+    }
 }

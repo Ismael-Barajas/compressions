@@ -1,7 +1,9 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::types::{AudioExtractionOptions, GifConversionOptions, PdfOptions, VideoOptions};
+use crate::types::{
+    AudioCompressionOptions, AudioExtractionOptions, GifConversionOptions, PdfOptions, VideoOptions,
+};
 
 static BITRATE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+[kKmMgG]?$").unwrap());
 
@@ -46,6 +48,16 @@ pub fn validate_video_options(opts: &VideoOptions) -> Result<(), String> {
 }
 
 pub fn validate_audio_options(opts: &AudioExtractionOptions) -> Result<(), String> {
+    if let Some(ref bitrate) = opts.bitrate {
+        validate_bitrate(bitrate, "audio bitrate")?;
+    }
+    if let Some(sr) = opts.sample_rate {
+        validate_range(sr, 8000, 192000, "sample rate")?;
+    }
+    Ok(())
+}
+
+pub fn validate_audio_compression_options(opts: &AudioCompressionOptions) -> Result<(), String> {
     if let Some(ref bitrate) = opts.bitrate {
         validate_bitrate(bitrate, "audio bitrate")?;
     }
@@ -181,5 +193,45 @@ mod tests {
             dpi: Some(0),
         };
         assert!(validate_pdf_options(&opts).is_err());
+    }
+
+    #[test]
+    fn valid_audio_compression_options() {
+        let opts = AudioCompressionOptions {
+            format: AudioCompressionFormat::Mp3,
+            bitrate: Some("192k".into()),
+            sample_rate: Some(44100),
+        };
+        assert!(validate_audio_compression_options(&opts).is_ok());
+    }
+
+    #[test]
+    fn valid_audio_compression_no_bitrate() {
+        let opts = AudioCompressionOptions {
+            format: AudioCompressionFormat::Flac,
+            bitrate: None,
+            sample_rate: None,
+        };
+        assert!(validate_audio_compression_options(&opts).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_audio_compression_bitrate() {
+        let opts = AudioCompressionOptions {
+            format: AudioCompressionFormat::Original,
+            bitrate: Some("invalid; rm -rf /".into()),
+            sample_rate: None,
+        };
+        assert!(validate_audio_compression_options(&opts).is_err());
+    }
+
+    #[test]
+    fn rejects_extreme_audio_compression_sample_rate() {
+        let opts = AudioCompressionOptions {
+            format: AudioCompressionFormat::Aac,
+            bitrate: Some("128k".into()),
+            sample_rate: Some(500000),
+        };
+        assert!(validate_audio_compression_options(&opts).is_err());
     }
 }

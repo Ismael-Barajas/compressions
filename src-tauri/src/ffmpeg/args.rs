@@ -184,6 +184,53 @@ pub fn build_audio_extraction_args(
     args
 }
 
+/// Build FFmpeg args for audio compression. Same as extraction but without `-vn`
+/// (input is already an audio file, not a video).
+/// The caller must resolve `Original` to a concrete `AudioOutputFormat` before calling this.
+pub fn build_audio_compression_args(
+    input: &str,
+    output: &str,
+    opts: &AudioExtractionOptions,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-y".into(),
+        "-i".into(),
+        input.into(),
+        "-progress".into(),
+        "pipe:2".into(),
+        "-stats_period".into(),
+        "0.1".into(),
+    ];
+
+    let codec_str = match opts.format {
+        AudioOutputFormat::Mp3 => "libmp3lame",
+        AudioOutputFormat::Aac => "aac",
+        AudioOutputFormat::Flac => "flac",
+        AudioOutputFormat::Opus => "libopus",
+        AudioOutputFormat::Wav => "pcm_s16le",
+    };
+    args.push("-c:a".into());
+    args.push(codec_str.into());
+
+    if !matches!(
+        opts.format,
+        AudioOutputFormat::Flac | AudioOutputFormat::Wav
+    ) {
+        if let Some(ref bitrate) = opts.bitrate {
+            args.push("-b:a".into());
+            args.push(bitrate.clone());
+        }
+    }
+
+    if let Some(sr) = opts.sample_rate {
+        args.push("-ar".into());
+        args.push(sr.to_string());
+    }
+
+    args.push(output.into());
+    args
+}
+
 /// Build args for video-to-GIF palette generation pass.
 pub fn build_gif_palette_args(
     input: &str,
@@ -464,6 +511,51 @@ mod tests {
         assert!(args.contains(&"hevc_nvenc".to_string()));
         assert!(args.contains(&"-rc".to_string()));
         assert!(args.contains(&"-cq".to_string()));
+    }
+
+    #[test]
+    fn audio_compression_mp3_no_vn() {
+        let opts = AudioExtractionOptions {
+            format: AudioOutputFormat::Mp3,
+            bitrate: Some("192k".into()),
+            sample_rate: None,
+        };
+        let args = build_audio_compression_args("in.mp3", "out.mp3", &opts);
+        assert!(args.contains(&"libmp3lame".to_string()));
+        assert!(
+            !args.contains(&"-vn".to_string()),
+            "-vn should NOT be present for audio compression"
+        );
+        assert!(args.contains(&"-b:a".to_string()));
+        assert!(args.contains(&"192k".to_string()));
+    }
+
+    #[test]
+    fn audio_compression_flac_no_bitrate() {
+        let opts = AudioExtractionOptions {
+            format: AudioOutputFormat::Flac,
+            bitrate: Some("192k".into()),
+            sample_rate: None,
+        };
+        let args = build_audio_compression_args("in.flac", "out.flac", &opts);
+        assert!(args.contains(&"flac".to_string()));
+        assert!(
+            !args.contains(&"-b:a".to_string()),
+            "bitrate should be ignored for FLAC"
+        );
+    }
+
+    #[test]
+    fn audio_compression_sample_rate() {
+        let opts = AudioExtractionOptions {
+            format: AudioOutputFormat::Opus,
+            bitrate: Some("128k".into()),
+            sample_rate: Some(48000),
+        };
+        let args = build_audio_compression_args("in.ogg", "out.ogg", &opts);
+        assert!(args.contains(&"-ar".to_string()));
+        assert!(args.contains(&"48000".to_string()));
+        assert!(args.contains(&"libopus".to_string()));
     }
 
     #[test]

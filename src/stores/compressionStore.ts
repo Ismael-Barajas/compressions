@@ -5,6 +5,7 @@ import type {
   VideoOptions,
   ImageOptions,
   AudioExtractionOptions,
+  AudioCompressionOptions,
   GifConversionOptions,
   PdfOptions,
   CompressionResult,
@@ -49,14 +50,21 @@ const DEFAULT_PDF_OPTIONS: PdfOptions = {
   dpi: null,
 };
 
+const DEFAULT_AUDIO_COMPRESSION_OPTIONS: AudioCompressionOptions = {
+  format: "Original",
+  bitrate: "192k",
+  sampleRate: null,
+};
+
 export type SidebarTab = "compress" | "tools";
-export type CompressTab = "video" | "image" | "pdf";
+export type CompressTab = "video" | "image" | "pdf" | "audio";
 
 interface CompressionStore {
   files: QueuedFile[];
   videoOptions: VideoOptions;
   imageOptions: ImageOptions;
   audioOptions: AudioExtractionOptions;
+  audioCompressionOptions: AudioCompressionOptions;
   gifOptions: GifConversionOptions;
   pdfOptions: PdfOptions;
   outputDir: string | null;
@@ -83,6 +91,7 @@ interface CompressionStore {
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setAudioOptions: (opts: Partial<AudioExtractionOptions>) => void;
+  setAudioCompressionOptions: (opts: Partial<AudioCompressionOptions>) => void;
   setGifOptions: (opts: Partial<GifConversionOptions>) => void;
   setPdfOptions: (opts: Partial<PdfOptions>) => void;
   setOutputDir: (dir: string | null) => void;
@@ -129,6 +138,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   videoOptions: DEFAULT_VIDEO_OPTIONS,
   imageOptions: DEFAULT_IMAGE_OPTIONS,
   audioOptions: DEFAULT_AUDIO_OPTIONS,
+  audioCompressionOptions: DEFAULT_AUDIO_COMPRESSION_OPTIONS,
   gifOptions: DEFAULT_GIF_OPTIONS,
   pdfOptions: DEFAULT_PDF_OPTIONS,
   outputDir: null,
@@ -223,6 +233,11 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
       audioOptions: { ...state.audioOptions, ...opts },
     })),
 
+  setAudioCompressionOptions: (opts) =>
+    set((state) => ({
+      audioCompressionOptions: { ...state.audioCompressionOptions, ...opts },
+    })),
+
   setGifOptions: (opts) =>
     set((state) => ({
       gifOptions: { ...state.gifOptions, ...opts },
@@ -295,4 +310,4 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     })),
 }));
 
-export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };
+export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_AUDIO_COMPRESSION_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };

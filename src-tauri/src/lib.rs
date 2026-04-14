@@ -68,6 +68,8 @@ pub fn run() {
             commands::scan::scan_paths,
             commands::audio::extract_audio,
             commands::audio::extract_audio_batch,
+            commands::audio::compress_audio,
+            commands::audio::compress_audio_batch,
             commands::gif::convert_video_to_gif,
             commands::gif::convert_videos_to_gif_batch,
             commands::pdf::compress_pdf,

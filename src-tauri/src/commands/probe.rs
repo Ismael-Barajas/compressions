@@ -13,6 +13,11 @@ const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
 ];
 
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts",
+    "pcm", "amr",
+];
+
 #[tauri::command]
 pub fn detect_media_type(path: String) -> Result<MediaType, String> {
     let ext = Path::new(&path)
@@ -26,6 +31,8 @@ pub fn detect_media_type(path: String) -> Result<MediaType, String> {
         Ok(MediaType::Image)
     } else if ext == "pdf" {
         Ok(MediaType::Pdf)
+    } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        Ok(MediaType::Audio)
     } else {
         Err(format!("Unsupported file type: .{}", ext))
     }
@@ -64,6 +71,18 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
             resolution: None,
             codec_name: None,
         }),
+        MediaType::Audio => {
+            let info = probe_video_info(&app, &path).await.ok();
+            Ok(FileInfo {
+                path,
+                file_name,
+                size,
+                media_type: MediaType::Audio,
+                duration: info.as_ref().and_then(|i| i.duration),
+                resolution: None,
+                codec_name: info.as_ref().and_then(|i| i.codec_name.clone()),
+            })
+        }
         MediaType::Image => {
             let ext = Path::new(&path)
                 .extension()
@@ -153,6 +172,33 @@ mod tests {
         assert!(matches!(
             detect_media_type("file.PDF".into()),
             Ok(MediaType::Pdf)
+        ));
+    }
+
+    #[test]
+    fn detect_audio_types() {
+        for ext in &[
+            "mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3",
+            "dts", "pcm", "amr",
+        ] {
+            let result = detect_media_type(format!("file.{}", ext));
+            assert!(
+                matches!(result, Ok(MediaType::Audio)),
+                "failed for .{}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn case_insensitive_audio() {
+        assert!(matches!(
+            detect_media_type("file.MP3".into()),
+            Ok(MediaType::Audio)
+        ));
+        assert!(matches!(
+            detect_media_type("file.Flac".into()),
+            Ok(MediaType::Audio)
         ));
     }
 
