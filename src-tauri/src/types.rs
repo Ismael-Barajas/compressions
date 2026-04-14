@@ -195,6 +195,15 @@ pub struct FileInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeEvent {
+    pub path: String,
+    pub size: u64,
+    pub resolution: Option<Resolution>,
+    pub duration: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum ProgressEvent {
     #[serde(rename_all = "camelCase")]
