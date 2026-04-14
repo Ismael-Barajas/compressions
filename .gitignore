@@ -36,3 +36,7 @@ npm-debug.log*
 
 # Misc
 test_folder/
+
+# Claude Code / internal planning
+.claude/
+docs/superpowers/

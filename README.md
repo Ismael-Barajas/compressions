@@ -4,42 +4,73 @@ A cross-platform desktop app for compressing videos, images, and PDFs. Built wit
 
 ## Features
 
-### Compression
+### Video Compression
 
-- **Video compression** — H.264, H.265/HEVC, AV1 via FFmpeg; control CRF, resolution, frame rate, audio codec/bitrate
-- **Image compression** — JPEG (MozJPEG), PNG (oxipng), WebP, AVIF, animated GIF; resize, strip metadata
-- **PDF compression** — Ghostscript-powered with Screen / Ebook / Printer / Prepress quality presets and DPI override
-- **Audio extraction** — Extract MP3, AAC, FLAC, Opus, or WAV from any video via right-click context menu
-- **Video-to-GIF conversion** — Two-pass palette FFmpeg approach with FPS, width, color count, and dither controls
+- **Codecs** — H.264, H.265/HEVC, AV1 (via SVT-AV1)
+- **Hardware acceleration** — Auto-detects NVIDIA NVENC (Windows/Linux) and Apple VideoToolbox (macOS) with automatic software fallback
+- **Quality control** — CRF 0–51 or bitrate override
+- **Resolution scaling** — Original, 4K, 1080p, 720p, 480p, or custom (aspect ratio preserved)
+- **Frame rate** — Original, 60, 30, 24, 15 fps, or custom
+- **Audio track** — AAC, Opus, copy original, or remove; bitrate 64k–320k
+- **FastStart** — Moves moov atom to front for web streaming (MP4)
+- **Input formats** — MP4, MKV, AVI, MOV, WebM, FLV, WMV, M4V, TS
 
-### Performance
+### Image Compression
 
-- **Hardware-accelerated video encoding** — Auto-detects VideoToolbox (macOS) and NVENC (Windows/Linux) with automatic software fallback
-- **Optimized FFmpeg presets** — `-preset fast` for H.264/H.265, `-preset 7` for SVT-AV1
-- **Parallel image processing** — Concurrent batch encoding with semaphore-based concurrency limiting
-- **Tuned AVIF encoder** — ravif speed 7 with thread capping to prevent contention in batches
+- **Output formats** — JPEG (MozJPEG), PNG (oxipng), WebP, AVIF (ravif), GIF, or Original (preserve format)
+- **Quality** — 1–100 per format
+- **Resize** — Fit or Exact mode, lock/unlock aspect ratio, width presets
+- **Metadata** — Strip or preserve EXIF data
+- **Parallel processing** — Up to 8 concurrent encode tasks
+- **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF
+
+### PDF Compression
+
+- **Presets** — Screen (72 DPI), Ebook (150 DPI), Printer (300 DPI), Prepress (300 DPI)
+- **DPI override** — 72, 150, 200, or 300
+- Powered by Ghostscript
+
+### Audio Extraction
+
+- Extract audio from any video via right-click context menu
+- **Formats** — MP3, AAC, FLAC, Opus, WAV
+- **Bitrate** — 64k–320k (lossy formats)
+- **Sample rate** — Original, 48000, 44100, or 22050 Hz
+
+### Video-to-GIF Conversion
+
+- Two-pass palette-based encoding for optimal color quality
+- **Controls** — FPS (5–30), max width, color count (16–256), dither mode (Floyd-Steinberg, Bayer, None)
+
+### Presets
+
+- **Built-in video presets** — Web Optimized, High Quality, Small File Size, Social Media
+- **Built-in image presets** — Web Optimized, High Quality, Small File Size, Thumbnail
+- Save and delete custom presets
 
 ### Workflow
 
-- Drag-and-drop file and folder input
-- **Clipboard paste** — `Ctrl/Cmd+V` to add files from clipboard or paste screenshots directly
-- **Add files during compression** — queue new files while a batch is processing
-- Built-in presets (Web Optimized, High Quality, Small File Size, Social Media) with custom preset save/delete
-- Batch processing with per-file progress bars (indeterminate for PDF)
+- Drag-and-drop files and folders
+- **Clipboard paste** — `Ctrl/Cmd+V` to add files or paste screenshots directly
+- **Add files during compression** — queue new files while a batch is running
+- Batch processing with per-file progress bars and ETA
 - **Per-file cancellation** during compression
 - Output modes: same folder, subfolder, or custom directory
-- Customizable output filename templates (`{name}`, `{date}`, `{time}`)
-- **Output filename conflict resolution** — automatic `_2`, `_3` suffixes to prevent overwrites
-- Automatic "already optimized" detection — original kept if output would be larger
+- Customizable filename templates (`{name}`, `{date}`, `{time}`)
+- Automatic `_2`, `_3` suffixes to prevent overwrites
+- Original kept if compressed output would be larger
 - Before/after file size comparison
+- File thumbnails (toggle on/off)
+- Right-click context menu on video files (Extract Audio, Convert to GIF)
 - **Keyboard shortcuts** — `Space` to start, `Escape` to cancel, `Ctrl/Cmd+V` to paste
-- Dark/light theme
+- Dark/light theme with system preference detection
+- Built-in auto-updater
 
 ### Observability
 
-- **Compression history** — Searchable log of all past compressions with size savings and duration
+- **Compression history** — Searchable log of past compressions with size savings and duration
 - **Application log viewer** — Filterable by level (ERROR, WARN, INFO, DEBUG, TRACE) with search
-- **Input validation** — All compression parameters validated server-side before processing
+- **Input validation** — All compression parameters validated before processing
 
 ## Prerequisites
 
@@ -66,12 +97,6 @@ powershell scripts/download-gs.ps1     # Windows PowerShell (requires 7-Zip)
 
 > **Windows note:** `download-gs.ps1` requires [7-Zip](https://www.7-zip.org/) to extract the Ghostscript installer (`choco install 7zip`).
 
-### Generate app icons
-
-```bash
-npx tauri icon path/to/your-icon.png
-```
-
 ### Start development
 
 **macOS / Linux:**
@@ -94,8 +119,8 @@ npm run tauri build
 
 Output:
 
-- Windows: `src-tauri/target/release/bundle/nsis/Compressions_0.1.0_x64-setup.exe`
-- macOS: `src-tauri/target/release/bundle/dmg/Compressions_0.1.0_aarch64.dmg`
+- Windows: `src-tauri/target/release/bundle/nsis/Compressions_1.0.0_x64-setup.exe`
+- macOS: `src-tauri/target/release/bundle/dmg/Compressions_1.0.0_aarch64.dmg`
 
 ## Tech Stack
 
@@ -108,6 +133,15 @@ Output:
 | Image     | mozjpeg, oxipng, webp, ravif, gif (native Rust) |
 | PDF       | Ghostscript sidecar                             |
 | State     | Zustand                                         |
+
+## Third-Party Licenses
+
+This application bundles the following external binaries as sidecars:
+
+- **FFmpeg / FFprobe** — Licensed under [GPL v2+](https://www.ffmpeg.org/legal.html). Source available at [ffmpeg.org](https://ffmpeg.org/).
+- **Ghostscript** — Licensed under [AGPL v3](https://www.ghostscript.com/licensing/). Source available at [ghostscript.com](https://www.ghostscript.com/).
+
+The Compressions application code itself is MIT-licensed. The bundled sidecar binaries retain their original licenses.
 
 ## License
 

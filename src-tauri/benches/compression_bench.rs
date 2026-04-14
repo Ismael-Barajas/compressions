@@ -1,6 +1,6 @@
 use compressions_lib::compression::image::compress;
 use compressions_lib::compression::progress::parse_progress_line;
-use compressions_lib::types::{ImageFormat, ImageOptions};
+use compressions_lib::types::{ImageFormat, ImageOptions, ResizeMode};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn bench_parse_progress(c: &mut Criterion) {
@@ -22,6 +22,7 @@ fn opts(format: ImageFormat, quality: u8) -> ImageOptions {
         format,
         quality,
         resize: None,
+        resize_mode: ResizeMode::Fit,
         strip_metadata: true,
     }
 }
