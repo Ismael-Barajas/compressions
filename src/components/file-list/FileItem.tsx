@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Video, Image, FileText, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -25,7 +25,7 @@ function MediaIcon({ mediaType, size }: { mediaType: string; size: number }) {
   return <Image size={size} style={style} />;
 }
 
-export function FileItem({ file, showThumbnails }: FileItemProps) {
+export const FileItem = memo(function FileItem({ file, showThumbnails }: FileItemProps) {
   const removeFile = useCompressionStore((s) => s.removeFile);
   const retryFile = useCompressionStore((s) => s.retryFile);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
@@ -257,7 +257,7 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
       )}
     </>
   );
-}
+});
 
 function ActionButton({
   children,
