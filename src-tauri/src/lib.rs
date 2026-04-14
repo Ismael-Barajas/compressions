@@ -61,6 +61,7 @@ pub fn run() {
             commands::image::compress_images_batch,
             commands::probe::probe_file,
             commands::probe::detect_media_type,
+            commands::probe::probe_files_batch,
             commands::presets::get_presets,
             commands::presets::save_preset,
             commands::presets::delete_preset,
