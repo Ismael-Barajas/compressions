@@ -22,6 +22,7 @@ pub enum ImageFormat {
     WebP,
     Avif,
     Gif,
+    Heic,
     Original,
 }
 
@@ -43,6 +44,8 @@ impl ImageFormat {
                     "webp" => ImageFormat::WebP,
                     "avif" => ImageFormat::Avif,
                     "gif" => ImageFormat::Gif,
+                    // HEIC can't be re-encoded (no HEIF muxer) — fall back to JPEG
+                    "heic" | "heif" => ImageFormat::Jpeg,
                     // BMP, TIFF, unknown → lossless PNG fallback
                     _ => ImageFormat::Png,
                 }
@@ -242,6 +245,15 @@ pub struct FileInfo {
     pub duration: Option<f64>,
     pub resolution: Option<Resolution>,
     pub codec_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeEvent {
+    pub path: String,
+    pub size: u64,
+    pub resolution: Option<Resolution>,
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

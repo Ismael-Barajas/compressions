@@ -7,7 +7,7 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 ];
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif", "heic", "heif",
 ];
 
 const PDF_EXTENSIONS: &[&str] = &["pdf"];

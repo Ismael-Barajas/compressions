@@ -23,6 +23,14 @@ fn is_avif_input(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_heic_input(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("heic") || e.eq_ignore_ascii_case("heif"))
+        .unwrap_or(false)
+}
+
 /// Decode an AVIF file to a temporary PNG via FFmpeg sidecar (preserves RGBA transparency).
 async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
     let temp_dir = std::env::temp_dir();
@@ -61,6 +69,46 @@ async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, 
     }
 
     Err("FFmpeg AVIF decode process ended unexpectedly".to_string())
+}
+
+/// Decode a HEIC/HEIF file to a temporary PNG via FFmpeg sidecar.
+async fn decode_heic_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
+    let temp_dir = std::env::temp_dir();
+    let temp_name = format!("compressions_heic_{}.png", Uuid::new_v4());
+    let temp_path = temp_dir.join(temp_name);
+    let temp_str = temp_path.to_string_lossy().to_string();
+
+    let args: Vec<String> = vec![
+        "-y".into(),
+        "-i".into(),
+        input.into(),
+        "-pix_fmt".into(),
+        "rgba".into(),
+        temp_str.clone(),
+    ];
+
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("Failed to create FFmpeg sidecar for HEIC decode: {}", e))?
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn FFmpeg for HEIC decode: {}", e))?;
+
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Terminated(status) = event {
+            if status.code == Some(0) {
+                return Ok(temp_str);
+            } else {
+                return Err(format!(
+                    "FFmpeg HEIC decoding failed (code {:?})",
+                    status.code
+                ));
+            }
+        }
+    }
+
+    Err("FFmpeg HEIC decode process ended unexpectedly".to_string())
 }
 
 #[tauri::command]
@@ -102,13 +150,15 @@ pub async fn compress_image(
     let mut resolved_options = options.clone();
     resolved_options.format = effective_format.clone();
 
-    // If input is AVIF, decode via FFmpeg to a temp PNG first (image crate can't decode AVIF)
-    let avif_temp = if is_avif_input(&input) {
+    // If input is AVIF or HEIC, decode via FFmpeg to a temp PNG first (image crate can't decode these)
+    let decode_temp = if is_avif_input(&input) {
         Some(decode_avif_via_ffmpeg(&app, &input).await?)
+    } else if is_heic_input(&input) {
+        Some(decode_heic_via_ffmpeg(&app, &input).await?)
     } else {
         None
     };
-    let effective_input = avif_temp.as_deref().unwrap_or(&input);
+    let effective_input = decode_temp.as_deref().unwrap_or(&input);
 
     // AVIF with metadata preservation routes through FFmpeg sidecar
     let needs_ffmpeg_avif =
@@ -127,8 +177,8 @@ pub async fn compress_image(
         .map_err(|e| format!("Task join error: {}", e))?
     };
 
-    // Clean up AVIF temp file
-    if let Some(ref temp) = avif_temp {
+    // Clean up decode temp file (AVIF or HEIC)
+    if let Some(ref temp) = decode_temp {
         let _ = std::fs::remove_file(temp);
     }
 
