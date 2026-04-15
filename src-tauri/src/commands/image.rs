@@ -164,21 +164,9 @@ pub async fn compress_image(
     let needs_ffmpeg_avif =
         matches!(effective_format, ImageFormat::Avif) && !resolved_options.strip_metadata;
 
-    // HEIC always routes through FFmpeg (image crate has no HEIC encoder)
-    let needs_ffmpeg_heic = matches!(effective_format, ImageFormat::Heic);
-
     let compression_result = if needs_ffmpeg_avif {
         // For AVIF output with metadata, use original input (FFmpeg handles the full pipeline)
         compress_avif_with_ffmpeg(&app, &input, &output, resolved_options.quality).await
-    } else if needs_ffmpeg_heic {
-        compress_heic_with_ffmpeg(
-            &app,
-            effective_input,
-            &output,
-            resolved_options.quality,
-            !resolved_options.strip_metadata,
-        )
-        .await
     } else {
         let input_for_compress = effective_input.to_string();
         let output_clone = output.clone();
@@ -292,61 +280,6 @@ async fn compress_avif_with_ffmpeg(
     }
 
     Err("FFmpeg AVIF process ended unexpectedly".to_string())
-}
-
-async fn compress_heic_with_ffmpeg(
-    app: &AppHandle,
-    input: &str,
-    output: &str,
-    quality: u8,
-    preserve_metadata: bool,
-) -> Result<(), String> {
-    // Map quality 0-100 to CRF 51-0 (libx265: lower CRF = higher quality)
-    let crf = ((100 - quality) as f32 * 51.0 / 100.0) as u8;
-
-    let mut args: Vec<String> = vec![
-        "-y".into(),
-        "-i".into(),
-        input.into(),
-        "-c:v".into(),
-        "libx265".into(),
-        "-crf".into(),
-        crf.to_string(),
-        "-tag:v".into(),
-        "hvc1".into(),
-        "-frames:v".into(),
-        "1".into(),
-    ];
-
-    if preserve_metadata {
-        args.push("-map_metadata".into());
-        args.push("0".into());
-    }
-
-    args.push(output.into());
-
-    let (mut rx, _child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg for HEIC: {}", e))?;
-
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(status) = event {
-            if status.code == Some(0) {
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "FFmpeg HEIC encoding failed (code {:?})",
-                    status.code
-                ));
-            }
-        }
-    }
-
-    Err("FFmpeg HEIC process ended unexpectedly".to_string())
 }
 
 #[tauri::command]

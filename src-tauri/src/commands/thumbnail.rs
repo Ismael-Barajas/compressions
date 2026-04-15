@@ -62,6 +62,77 @@ async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> 
     Ok(())
 }
 
+/// Decode an image to a temp PNG via FFmpeg, then thumbnail with the `image` crate.
+/// Used for formats the `image` crate can't decode directly (HEIC/HEIF) where FFmpeg's
+/// tile grid assembly uses an internal complex filtergraph that conflicts with `-vf`.
+async fn thumbnail_via_decode(
+    app: &AppHandle,
+    path: &str,
+    out_path: PathBuf,
+) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    let temp_name = format!("compressions_thumb_{}.png", path_hash(path));
+    let temp_path = temp_dir.join(&temp_name);
+    let temp_str = temp_path
+        .to_str()
+        .ok_or_else(|| "Invalid temp path".to_string())?
+        .to_string();
+
+    // Decode to full-size PNG (no filters — avoids complex filtergraph conflict)
+    let args: Vec<String> = vec![
+        "-y".into(),
+        "-i".into(),
+        path.into(),
+        "-frames:v".into(),
+        "1".into(),
+        "-pix_fmt".into(),
+        "rgba".into(),
+        temp_str.clone(),
+    ];
+
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("Failed to create FFmpeg sidecar: {e}"))?
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
+
+    let mut stderr_lines = Vec::new();
+    let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stderr(line) => {
+                    stderr_lines.push(String::from_utf8_lossy(&line).to_string());
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
+            }
+        }
+    })
+    .await;
+
+    if recv_result.is_err() {
+        let _ = child.kill();
+        let _ = std::fs::remove_file(&temp_path);
+        return Err("FFmpeg decode timed out".to_string());
+    }
+
+    if !temp_path.exists() {
+        let stderr = stderr_lines.join("\n");
+        tracing::warn!(path = %path, stderr = %stderr, "FFmpeg decode for thumbnail failed");
+        return Err("FFmpeg decode did not produce output".to_string());
+    }
+
+    // Now thumbnail the decoded PNG with the image crate
+    let result = thumbnail_image(temp_str.clone(), out_path).await;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_path);
+
+    result
+}
+
 /// Generate a thumbnail using FFmpeg (for videos and AVIF images), write to disk.
 /// `is_video` controls whether we seek ahead (videos) or not (still images like AVIF).
 async fn thumbnail_ffmpeg(
@@ -86,6 +157,8 @@ async fn thumbnail_ffmpeg(
     args.push("1".to_string());
     args.push("-vf".to_string());
     args.push(format!("scale={THUMB_SIZE}:-2"));
+    args.push("-pix_fmt".to_string());
+    args.push("yuvj420p".to_string());
     args.push("-q:v".to_string());
     args.push("5".to_string());
     args.push(out_str.to_string());
@@ -98,10 +171,15 @@ async fn thumbnail_ffmpeg(
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
 
+    let mut stderr_lines = Vec::new();
     let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
         while let Some(event) = rx.recv().await {
-            if let CommandEvent::Terminated(_) = event {
-                break;
+            match event {
+                CommandEvent::Stderr(line) => {
+                    stderr_lines.push(String::from_utf8_lossy(&line).to_string());
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
             }
         }
     })
@@ -116,6 +194,8 @@ async fn thumbnail_ffmpeg(
     // child dropped here on success path — process already terminated
 
     if !out_path.exists() {
+        let stderr = stderr_lines.join("\n");
+        tracing::warn!(path = %path, stderr = %stderr, "FFmpeg thumbnail did not produce output");
         return Err("FFmpeg did not produce output".to_string());
     }
 
@@ -153,7 +233,12 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
 
     let result = if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         thumbnail_image(path.to_string(), out_path.clone()).await
-    } else if ext == "avif" || ext == "heic" || ext == "heif" {
+    } else if ext == "heic" || ext == "heif" {
+        // HEIC uses tile grids internally — FFmpeg assembles them via a complex
+        // filtergraph, so we can't add -vf filters. Decode to temp PNG first,
+        // then thumbnail with the image crate.
+        thumbnail_via_decode(app, path, out_path.clone()).await
+    } else if ext == "avif" {
         thumbnail_ffmpeg(app, path, &out_path, false).await
     } else {
         // Video

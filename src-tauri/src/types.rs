@@ -44,7 +44,8 @@ impl ImageFormat {
                     "webp" => ImageFormat::WebP,
                     "avif" => ImageFormat::Avif,
                     "gif" => ImageFormat::Gif,
-                    "heic" | "heif" => ImageFormat::Heic,
+                    // HEIC can't be re-encoded (no HEIF muxer) — fall back to JPEG
+                    "heic" | "heif" => ImageFormat::Jpeg,
                     // BMP, TIFF, unknown → lossless PNG fallback
                     _ => ImageFormat::Png,
                 }

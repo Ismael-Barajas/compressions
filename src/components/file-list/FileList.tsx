@@ -114,6 +114,11 @@ export function FileList() {
     }
   }, [showThumbnails]);
 
+  // Invalidate cached row heights when switching between list/thumbnail views
+  useEffect(() => {
+    virtualizer.measure();
+  }, [showThumbnails, virtualizer]);
+
   const handleAddMore = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");

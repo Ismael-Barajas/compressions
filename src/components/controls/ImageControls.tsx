@@ -10,7 +10,6 @@ const FORMATS: { value: ImageFormat; label: string }[] = [
   { value: "Png", label: "PNG" },
   { value: "WebP", label: "WebP" },
   { value: "Avif", label: "AVIF" },
-  { value: "Heic", label: "HEIC" },
 ];
 
 export function ImageControls() {
@@ -26,7 +25,7 @@ export function ImageControls() {
 
       {/* Format */}
       <FieldGroup label="Output Format">
-        <div className="grid grid-cols-3 gap-1">
+        <div className="grid grid-cols-5 gap-1">
           {FORMATS.map((f) => (
             <ChipButton
               key={f.value}
