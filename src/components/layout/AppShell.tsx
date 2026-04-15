@@ -9,6 +9,7 @@ import { DropZone } from "../dropzone/DropZone";
 import { FileList } from "../file-list/FileList";
 import { Sidebar } from "./Sidebar";
 import { ResultsSummary } from "../output/ResultsSummary";
+import { BatchProgressBar } from "../output/BatchProgressBar";
 import { HistoryPanel } from "../history/HistoryPanel";
 import { LogViewer } from "../logs/LogViewer";
 
@@ -17,6 +18,7 @@ export function AppShell() {
   const addFiles = useCompressionStore((s) => s.addFiles);
   const updateFileProbes = useCompressionStore((s) => s.updateFileProbes);
   const [isDragOver, setIsDragOver] = useState(false);
+  const isCompressing = useCompressionStore((s) => s.isCompressing);
 
   const processFilePaths = useCallback(
     async (paths: string[]) => {
@@ -162,6 +164,7 @@ export function AppShell() {
               </div>
             )}
             <FileList />
+            {isCompressing && !allComplete && <BatchProgressBar />}
             {allComplete && <ResultsSummary />}
           </>
         )}
