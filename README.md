@@ -22,7 +22,7 @@ A cross-platform desktop app for compressing videos, images, audio, and PDFs. Bu
 - **Resize** — Fit or Exact mode, lock/unlock aspect ratio, width presets
 - **Metadata** — Strip or preserve EXIF data
 - **Parallel processing** — Up to 8 concurrent encode tasks
-- **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF
+- **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF, HEIC, HEIF
 
 ### PDF Compression
 
@@ -128,8 +128,8 @@ npm run tauri build
 
 Output:
 
-- Windows: `src-tauri/target/release/bundle/nsis/Compressions_1.0.0_x64-setup.exe`
-- macOS: `src-tauri/target/release/bundle/dmg/Compressions_1.0.0_aarch64.dmg`
+- Windows: `src-tauri/target/release/bundle/nsis/Compressions_1.1.0_x64-setup.exe`
+- macOS: `src-tauri/target/release/bundle/dmg/Compressions_1.1.0_aarch64.dmg`
 
 ## Tech Stack
 
