@@ -5,7 +5,7 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 const IMAGE_EXTENSIONS = new Set([
-  ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif",
+  ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif", ".heic", ".heif",
 ]);
 
 const PDF_EXTENSIONS = new Set([".pdf"]);

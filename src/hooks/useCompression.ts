@@ -133,7 +133,7 @@ export function useCompression() {
                 let format: string | undefined;
                 if (imageOptions.format === "Original") {
                   const ext = f.path.slice(f.path.lastIndexOf(".")).toLowerCase();
-                  const keepExt = [".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"];
+                  const keepExt = [".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif", ".heic", ".heif"];
                   format = keepExt.includes(ext) ? undefined : "png";
                 } else {
                   format = imageOptions.format.toLowerCase();
