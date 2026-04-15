@@ -22,6 +22,7 @@ pub enum ImageFormat {
     WebP,
     Avif,
     Gif,
+    Heic,
     Original,
 }
 
@@ -43,6 +44,7 @@ impl ImageFormat {
                     "webp" => ImageFormat::WebP,
                     "avif" => ImageFormat::Avif,
                     "gif" => ImageFormat::Gif,
+                    "heic" | "heif" => ImageFormat::Heic,
                     // BMP, TIFF, unknown → lossless PNG fallback
                     _ => ImageFormat::Png,
                 }

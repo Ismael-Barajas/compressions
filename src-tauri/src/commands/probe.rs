@@ -11,7 +11,7 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 ];
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif", "heic", "heif",
 ];
 
 #[tauri::command]
@@ -72,8 +72,8 @@ pub async fn probe_file(app: AppHandle, path: String) -> Result<FileInfo, String
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
 
-            // AVIF: image crate can't decode AVIF, use FFprobe for dimensions
-            let resolution = if ext == "avif" {
+            // AVIF/HEIC: image crate can't decode these, use FFprobe for dimensions
+            let resolution = if ext == "avif" || ext == "heic" || ext == "heif" {
                 let info = probe_video_info(&app, &path).await.ok();
                 info.and_then(|i| i.resolution)
             } else {
@@ -138,7 +138,7 @@ pub async fn probe_files_batch(
                         .map(|e| e.to_lowercase())
                         .unwrap_or_default();
 
-                    let res = if ext == "avif" {
+                    let res = if ext == "avif" || ext == "heic" || ext == "heif" {
                         probe_video_info(&app, &path)
                             .await
                             .ok()
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn detect_image_types() {
         for ext in &[
-            "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+            "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif", "heic", "heif",
         ] {
             let result = detect_media_type(format!("file.{}", ext));
             assert!(
