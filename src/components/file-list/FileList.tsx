@@ -154,7 +154,7 @@ export function FileList() {
   };
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Toolbar */}
       <div
         className="mb-3 flex items-center justify-between border-b pb-3"
@@ -183,7 +183,7 @@ export function FileList() {
       </div>
 
       {/* File list */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
         {useVirtual ? (
           <div
             style={{
