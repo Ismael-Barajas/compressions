@@ -130,6 +130,8 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
     // PDF or unsupported — no thumbnail
     if !IMAGE_EXTENSIONS.contains(&ext.as_str())
         && ext != "avif"
+        && ext != "heic"
+        && ext != "heif"
         && !VIDEO_EXTENSIONS.contains(&ext.as_str())
     {
         return Ok(None);
@@ -151,7 +153,7 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
 
     let result = if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         thumbnail_image(path.to_string(), out_path.clone()).await
-    } else if ext == "avif" {
+    } else if ext == "avif" || ext == "heic" || ext == "heif" {
         thumbnail_ffmpeg(app, path, &out_path, false).await
     } else {
         // Video
