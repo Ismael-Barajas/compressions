@@ -1,20 +1,26 @@
-import type { MediaType, QueuedFile } from "../types/compression";
+import type { AudioCompressionFormat, MediaType, QueuedFile } from "../types/compression";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts",
 ]);
 
 const IMAGE_EXTENSIONS = new Set([
-  ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif",
+  ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif", ".heic", ".heif",
 ]);
 
 const PDF_EXTENSIONS = new Set([".pdf"]);
+
+const AUDIO_EXTENSIONS = new Set([
+  ".mp3", ".aac", ".m4a", ".flac", ".wav", ".ogg", ".opus", ".wma",
+  ".aiff", ".ape", ".alac", ".ac3", ".dts", ".pcm", ".amr",
+]);
 
 export function getMediaType(filePath: string): MediaType | null {
   const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
   if (IMAGE_EXTENSIONS.has(ext)) return "image";
   if (PDF_EXTENSIONS.has(ext)) return "pdf";
+  if (AUDIO_EXTENSIONS.has(ext)) return "audio";
   return null;
 }
 
@@ -79,6 +85,28 @@ const AUDIO_FORMAT_EXTENSIONS: Record<string, string> = {
 };
 
 export function getAudioExtension(format: string): string {
+  return AUDIO_FORMAT_EXTENSIONS[format] || "mp3";
+}
+
+const AUDIO_INPUT_TO_OUTPUT_EXT: Record<string, string> = {
+  ".mp3": "mp3",
+  ".aac": "m4a",
+  ".m4a": "m4a",
+  ".flac": "flac",
+  ".ogg": "ogg",
+  ".opus": "ogg",
+  ".wav": "wav",
+  ".pcm": "wav",
+};
+
+export function resolveAudioCompressionExtension(
+  format: AudioCompressionFormat,
+  inputPath: string,
+): string {
+  if (format === "Original") {
+    const ext = inputPath.slice(inputPath.lastIndexOf(".")).toLowerCase();
+    return AUDIO_INPUT_TO_OUTPUT_EXT[ext] || "mp3";
+  }
   return AUDIO_FORMAT_EXTENSIONS[format] || "mp3";
 }
 

@@ -5,12 +5,14 @@ import { PresetSelector } from "./PresetSelector";
 import { VideoControls } from "./VideoControls";
 import { ImageControls } from "./ImageControls";
 import { PdfControls } from "./PdfControls";
+import { AudioCompressionControls } from "./AudioCompressionControls";
 import { OutputSettings } from "../output/OutputSettings";
 
 const TAB_LABELS: Record<CompressTabId, string> = {
   video: "Video",
   image: "Image",
   pdf: "PDF",
+  audio: "Audio",
 };
 
 export function CompressTab() {
@@ -24,8 +26,9 @@ export function CompressTab() {
       if (f.mediaType === "video") present.add("video");
       else if (f.mediaType === "image") present.add("image");
       else if (f.mediaType === "pdf") present.add("pdf");
+      else if (f.mediaType === "audio") present.add("audio");
     }
-    const order: CompressTabId[] = ["video", "image", "pdf"];
+    const order: CompressTabId[] = ["video", "image", "audio", "pdf"];
     return order.filter((t) => present.has(t));
   }, [files]);
 
@@ -84,6 +87,7 @@ export function CompressTab() {
             <ImageControls />
           </>
         )}
+        {currentTab === "audio" && <AudioCompressionControls />}
         {currentTab === "pdf" && <PdfControls />}
       </div>
 

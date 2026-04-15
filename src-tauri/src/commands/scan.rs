@@ -7,10 +7,15 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 ];
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif",
+    "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "tif", "gif", "heic", "heif",
 ];
 
 const PDF_EXTENSIONS: &[&str] = &["pdf"];
+
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts",
+    "pcm", "amr",
+];
 
 fn is_media_file(path: &Path) -> bool {
     path.extension()
@@ -20,6 +25,7 @@ fn is_media_file(path: &Path) -> bool {
             VIDEO_EXTENSIONS.contains(&ext.as_str())
                 || IMAGE_EXTENSIONS.contains(&ext.as_str())
                 || PDF_EXTENSIONS.contains(&ext.as_str())
+                || AUDIO_EXTENSIONS.contains(&ext.as_str())
         })
         .unwrap_or(false)
 }

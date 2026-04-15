@@ -1,4 +1,4 @@
-export type MediaType = "video" | "image" | "pdf";
+export type MediaType = "video" | "image" | "pdf" | "audio";
 
 export type VideoCodec = "H264" | "H265" | "AV1";
 export type AudioCodec = "AAC" | "Opus" | "Copy" | "None";
@@ -9,6 +9,14 @@ export type AudioOutputFormat = "Mp3" | "Aac" | "Flac" | "Opus" | "Wav";
 
 export interface AudioExtractionOptions {
   format: AudioOutputFormat;
+  bitrate: string | null;
+  sampleRate: number | null;
+}
+
+export type AudioCompressionFormat = "Original" | "Mp3" | "Aac" | "Flac" | "Opus" | "Wav";
+
+export interface AudioCompressionOptions {
+  format: AudioCompressionFormat;
   bitrate: string | null;
   sampleRate: number | null;
 }
@@ -87,6 +95,13 @@ export interface FileInfo {
   duration: number | null;
   resolution: Resolution | null;
   codecName: string | null;
+}
+
+export interface ProbeEvent {
+  path: string;
+  size: number;
+  resolution: Resolution | null;
+  duration: number | null;
 }
 
 export interface QueuedFile {

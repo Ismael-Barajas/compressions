@@ -3,12 +3,14 @@ import type {
   VideoOptions,
   ImageOptions,
   AudioExtractionOptions,
+  AudioCompressionOptions,
   GifConversionOptions,
   PdfOptions,
   CompressionResult,
   FileInfo,
   MediaType,
   ProgressEvent,
+  ProbeEvent,
   HistoryEntry,
   LogEntry,
 } from "../types/compression";
@@ -61,6 +63,15 @@ export async function probeFile(path: string): Promise<FileInfo> {
   return invoke("probe_file", { path });
 }
 
+export async function probeFilesBatch(
+  paths: string[],
+  onResult: (event: ProbeEvent) => void,
+): Promise<void> {
+  const channel = new Channel<ProbeEvent>();
+  channel.onmessage = onResult;
+  return invoke("probe_files_batch", { paths, onResult: channel });
+}
+
 export async function detectMediaType(path: string): Promise<MediaType> {
   return invoke("detect_media_type", { path });
 }
@@ -100,6 +111,23 @@ export async function extractAudioBatch(
   onProgress: Channel<ProgressEvent>,
 ): Promise<CompressionResult[]> {
   return invoke("extract_audio_batch", { files, options, onProgress });
+}
+
+export async function compressAudio(
+  input: string,
+  output: string,
+  options: AudioCompressionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult> {
+  return invoke("compress_audio", { input, output, options, onProgress });
+}
+
+export async function compressAudioBatch(
+  files: BatchEntry[],
+  options: AudioCompressionOptions,
+  onProgress: Channel<ProgressEvent>,
+): Promise<CompressionResult[]> {
+  return invoke("compress_audio_batch", { files, options, onProgress });
 }
 
 export async function convertVideoToGif(

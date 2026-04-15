@@ -4,6 +4,7 @@ import {
   compressVideosBatch,
   compressImagesBatch,
   compressPdfsBatch,
+  compressAudioBatch,
   extractAudio,
   extractAudioBatch,
   convertVideoToGif,
@@ -11,7 +12,7 @@ import {
   cancelCompression,
 } from "../lib/commands";
 import { useCompressionStore } from "../stores/compressionStore";
-import { buildOutputPath, getParentDir, getAudioExtension } from "../lib/fileUtils";
+import { buildOutputPath, getParentDir, getAudioExtension, resolveAudioCompressionExtension } from "../lib/fileUtils";
 import type { ProgressEvent, QueuedFile } from "../types/compression";
 
 export function useCompression() {
@@ -44,6 +45,7 @@ export function useCompression() {
           videoOptions,
           imageOptions,
           pdfOptions,
+          audioCompressionOptions,
           outputDir: currentOutputDir,
           outputMode: currentOutputMode,
           subfolderName,
@@ -69,6 +71,7 @@ export function useCompression() {
         const videoFiles = queued.filter((f) => f.mediaType === "video");
         const imageFiles = queued.filter((f) => f.mediaType === "image");
         const pdfFiles = queued.filter((f) => f.mediaType === "pdf");
+        const audioFiles = queued.filter((f) => f.mediaType === "audio");
 
         const promises: Promise<void>[] = [];
 
@@ -225,6 +228,64 @@ export function useCompression() {
               } catch (err) {
                 for (let i = pdfIndex; i < pdfFileIds.length; i++) {
                   const fid = pdfFileIds[i];
+                  useCompressionStore.setState((state) => ({
+                    files: state.files.map((f) =>
+                      f.id === fid
+                        ? { ...f, status: "error" as const, error: String(err) }
+                        : f,
+                    ),
+                  }));
+                }
+              }
+            })(),
+          );
+        }
+
+        // --- Audio batch (sequential, with progress channel) ---
+        if (audioFiles.length > 0) {
+          promises.push(
+            (async () => {
+              const audioBatch = audioFiles.map((f) => ({
+                input: f.path,
+                output: buildOutputPath(
+                  f.path,
+                  getOutputDirForFile(f),
+                  resolveAudioCompressionExtension(audioCompressionOptions.format, f.path),
+                  outputTemplate,
+                ),
+              }));
+
+              const audioFileIds = audioFiles.map((f) => f.id);
+              let audioIndex = 0;
+
+              const channel = new Channel<ProgressEvent>();
+              channel.onmessage = (event: ProgressEvent) => {
+                switch (event.event) {
+                  case "started": {
+                    const fileId = audioFileIds[audioIndex];
+                    if (fileId) {
+                      setFileStatus(fileId, "processing", event.data.jobId);
+                    }
+                    audioIndex++;
+                    break;
+                  }
+                  case "progress":
+                    updateProgress(event.data.jobId, event.data);
+                    break;
+                  case "completed":
+                    markComplete(event.data.jobId, event.data);
+                    break;
+                  case "error":
+                    markError(event.data.jobId, event.data.message);
+                    break;
+                }
+              };
+
+              try {
+                await compressAudioBatch(audioBatch, audioCompressionOptions, channel);
+              } catch (err) {
+                for (let i = audioIndex; i < audioFileIds.length; i++) {
+                  const fid = audioFileIds[i];
                   useCompressionStore.setState((state) => ({
                     files: state.files.map((f) =>
                       f.id === fid

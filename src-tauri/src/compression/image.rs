@@ -54,6 +54,10 @@ pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
         ImageFormat::Avif => encode_avif(&img, output, options.quality),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
+        ImageFormat::Heic => Err(
+            "HEIC output encoding is not supported by the native encoder; use FFmpeg pipeline"
+                .to_string(),
+        ),
         ImageFormat::Original => unreachable!("resolve_for_input always returns concrete format"),
     }
 }

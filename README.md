@@ -1,6 +1,6 @@
 # Compressions
 
-A cross-platform desktop app for compressing videos, images, and PDFs. Built with Tauri v2, React, TypeScript, and Rust.
+A cross-platform desktop app for compressing videos, images, audio, and PDFs. Built with Tauri v2, React, TypeScript, and Rust.
 
 ## Features
 
@@ -22,13 +22,22 @@ A cross-platform desktop app for compressing videos, images, and PDFs. Built wit
 - **Resize** — Fit or Exact mode, lock/unlock aspect ratio, width presets
 - **Metadata** — Strip or preserve EXIF data
 - **Parallel processing** — Up to 8 concurrent encode tasks
-- **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF
+- **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF, HEIC, HEIF
 
 ### PDF Compression
 
 - **Presets** — Screen (72 DPI), Ebook (150 DPI), Printer (300 DPI), Prepress (300 DPI)
 - **DPI override** — 72, 150, 200, or 300
 - Powered by Ghostscript
+
+### Audio Compression
+
+- **Output formats** — MP3, AAC, Opus, FLAC, WAV, or Original (preserve format)
+- **Bitrate** — Presets (64k–320k) or custom input (lossy formats)
+- **Sample rate** — Original, 48000, 44100, or 22050 Hz
+- **Original format** — Keeps source format with new encoding settings; niche formats (WMA, APE, DTS, etc.) fall back to MP3
+- **Audio wave progress** — Animated waveform equalizer during compression
+- **Input formats** — MP3, AAC, M4A, FLAC, WAV, OGG, Opus, WMA, AIFF, APE, ALAC, AC3, DTS, PCM, AMR
 
 ### Audio Extraction
 
@@ -119,8 +128,8 @@ npm run tauri build
 
 Output:
 
-- Windows: `src-tauri/target/release/bundle/nsis/Compressions_1.0.0_x64-setup.exe`
-- macOS: `src-tauri/target/release/bundle/dmg/Compressions_1.0.0_aarch64.dmg`
+- Windows: `src-tauri/target/release/bundle/nsis/Compressions_1.1.0_x64-setup.exe`
+- macOS: `src-tauri/target/release/bundle/dmg/Compressions_1.1.0_aarch64.dmg`
 
 ## Tech Stack
 
@@ -130,6 +139,7 @@ Output:
 | Frontend  | React 19 + TypeScript + Tailwind CSS            |
 | Backend   | Rust                                            |
 | Video     | FFmpeg sidecar                                  |
+| Audio     | FFmpeg sidecar                                  |
 | Image     | mozjpeg, oxipng, webp, ravif, gif (native Rust) |
 | PDF       | Ghostscript sidecar                             |
 | State     | Zustand                                         |

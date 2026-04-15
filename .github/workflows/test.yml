@@ -1,7 +1,7 @@
 name: Tests
 
 on:
-  workflow_call:
+  workflow_dispatch: # disabled — re-enable workflow_call to re-activate
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

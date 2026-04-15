@@ -5,6 +5,7 @@ import type {
   VideoOptions,
   ImageOptions,
   AudioExtractionOptions,
+  AudioCompressionOptions,
   GifConversionOptions,
   PdfOptions,
   CompressionResult,
@@ -49,14 +50,21 @@ const DEFAULT_PDF_OPTIONS: PdfOptions = {
   dpi: null,
 };
 
+const DEFAULT_AUDIO_COMPRESSION_OPTIONS: AudioCompressionOptions = {
+  format: "Original",
+  bitrate: "192k",
+  sampleRate: null,
+};
+
 export type SidebarTab = "compress" | "tools";
-export type CompressTab = "video" | "image" | "pdf";
+export type CompressTab = "video" | "image" | "pdf" | "audio";
 
 interface CompressionStore {
   files: QueuedFile[];
   videoOptions: VideoOptions;
   imageOptions: ImageOptions;
   audioOptions: AudioExtractionOptions;
+  audioCompressionOptions: AudioCompressionOptions;
   gifOptions: GifConversionOptions;
   pdfOptions: PdfOptions;
   outputDir: string | null;
@@ -79,10 +87,12 @@ interface CompressionStore {
   markError: (jobId: string, message: string) => void;
   setFileStatus: (id: string, status: QueuedFile["status"], jobId?: string) => void;
   updateFileProbe: (id: string, info: { size: number; resolution?: Resolution | null; duration?: number | null }) => void;
+  updateFileProbes: (updates: Array<{ id: string; info: { size: number; resolution?: Resolution | null; duration?: number | null } }>) => void;
   setThumbnailPath: (id: string, thumbnailPath: string) => void;
   setVideoOptions: (opts: Partial<VideoOptions>) => void;
   setImageOptions: (opts: Partial<ImageOptions>) => void;
   setAudioOptions: (opts: Partial<AudioExtractionOptions>) => void;
+  setAudioCompressionOptions: (opts: Partial<AudioCompressionOptions>) => void;
   setGifOptions: (opts: Partial<GifConversionOptions>) => void;
   setPdfOptions: (opts: Partial<PdfOptions>) => void;
   setOutputDir: (dir: string | null) => void;
@@ -129,6 +139,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   videoOptions: DEFAULT_VIDEO_OPTIONS,
   imageOptions: DEFAULT_IMAGE_OPTIONS,
   audioOptions: DEFAULT_AUDIO_OPTIONS,
+  audioCompressionOptions: DEFAULT_AUDIO_COMPRESSION_OPTIONS,
   gifOptions: DEFAULT_GIF_OPTIONS,
   pdfOptions: DEFAULT_PDF_OPTIONS,
   outputDir: null,
@@ -173,6 +184,23 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
           : f,
       ),
     })),
+
+  updateFileProbes: (updates) =>
+    set((state) => {
+      const updateMap = new Map(updates.map((u) => [u.id, u.info]));
+      return {
+        files: state.files.map((f) => {
+          const info = updateMap.get(f.id);
+          if (!info) return f;
+          return {
+            ...f,
+            size: info.size,
+            resolution: info.resolution ?? f.resolution,
+            duration: info.duration ?? f.duration,
+          };
+        }),
+      };
+    }),
 
   updateProgress: (jobId, payload) =>
     set((state) => ({
@@ -221,6 +249,11 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   setAudioOptions: (opts) =>
     set((state) => ({
       audioOptions: { ...state.audioOptions, ...opts },
+    })),
+
+  setAudioCompressionOptions: (opts) =>
+    set((state) => ({
+      audioCompressionOptions: { ...state.audioCompressionOptions, ...opts },
     })),
 
   setGifOptions: (opts) =>
@@ -295,4 +328,4 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
     })),
 }));
 
-export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };
+export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_AUDIO_COMPRESSION_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };

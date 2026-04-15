@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Video, Image, FileText, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -6,6 +6,7 @@ import type { QueuedFile } from "../../types/compression";
 import { formatFileSize, getSavingsPercent } from "../../lib/fileUtils";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
+import { AudioWaveProgress } from "./AudioWaveProgress";
 
 interface FileItemProps {
   file: QueuedFile;
@@ -22,10 +23,11 @@ function MediaIcon({ mediaType, size }: { mediaType: string; size: number }) {
   const style = { color: "var(--text-muted)" };
   if (mediaType === "video") return <Video size={size} style={style} />;
   if (mediaType === "pdf") return <FileText size={size} style={style} />;
+  if (mediaType === "audio") return <Music size={size} style={style} />;
   return <Image size={size} style={style} />;
 }
 
-export function FileItem({ file, showThumbnails }: FileItemProps) {
+export const FileItem = memo(function FileItem({ file, showThumbnails }: FileItemProps) {
   const removeFile = useCompressionStore((s) => s.removeFile);
   const retryFile = useCompressionStore((s) => s.retryFile);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
@@ -140,31 +142,35 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
   );
 
   const progressBar = file.status === "processing" && (
-    <div className="mt-2.5">
-      <div className="h-[3px] overflow-hidden" style={{ backgroundColor: "var(--bg-tertiary)" }}>
-        {file.progress > 0 ? (
-          <div
-            className="h-full transition-all duration-300"
-            style={{
-              width: `${file.progress}%`,
-              backgroundColor: "var(--accent)",
-              boxShadow: "0 0 8px var(--accent-glow)",
-            }}
-          />
-        ) : (
-          <div
-            className="progress-indeterminate h-full"
-            style={{
-              backgroundColor: "var(--accent)",
-              boxShadow: "0 0 8px var(--accent-glow)",
-            }}
-          />
-        )}
+    file.mediaType === "audio" ? (
+      <AudioWaveProgress progress={file.progress} />
+    ) : (
+      <div className="mt-2.5">
+        <div className="h-[3px] overflow-hidden" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+          {file.progress > 0 ? (
+            <div
+              className="h-full transition-all duration-300"
+              style={{
+                width: `${file.progress}%`,
+                backgroundColor: "var(--accent)",
+                boxShadow: "0 0 8px var(--accent-glow)",
+              }}
+            />
+          ) : (
+            <div
+              className="progress-indeterminate h-full"
+              style={{
+                backgroundColor: "var(--accent)",
+                boxShadow: "0 0 8px var(--accent-glow)",
+              }}
+            />
+          )}
+        </div>
+        <span className="font-data mt-1 block text-right" style={{ color: "var(--text-muted)" }}>
+          {file.progress > 0 ? `${Math.round(file.progress)}%` : "Processing…"}
+        </span>
       </div>
-      <span className="font-data mt-1 block text-right" style={{ color: "var(--text-muted)" }}>
-        {file.progress > 0 ? `${Math.round(file.progress)}%` : "Processing…"}
-      </span>
-    </div>
+    )
   );
 
   return (
@@ -257,7 +263,7 @@ export function FileItem({ file, showThumbnails }: FileItemProps) {
       )}
     </>
   );
-}
+});
 
 function ActionButton({
   children,

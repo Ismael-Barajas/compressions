@@ -35,7 +35,8 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
             name: "Media Files",
             extensions: [
               "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v",
-              "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif",
+              "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif", "heic", "heif",
+              "mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts", "pcm", "amr",
               "pdf",
             ],
           },
@@ -45,7 +46,11 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
           },
           {
             name: "Image Files",
-            extensions: ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif"],
+            extensions: ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif", "heic", "heif"],
+          },
+          {
+            name: "Audio Files",
+            extensions: ["mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts", "pcm", "amr"],
           },
           {
             name: "PDF Files",
@@ -93,7 +98,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
       </p>
 
       <div className="mt-6 font-mono text-[10px] tracking-wide" style={{ color: "var(--text-muted)" }}>
-        MP4 / MKV / MOV / WebM / JPG / PNG / WebP / AVIF / GIF / PDF
+        MP4 / MKV / MOV / WebM / JPG / PNG / WebP / AVIF / HEIC / GIF / MP3 / FLAC / WAV / OGG / AAC / PDF
       </div>
 
       <div className="relative z-10 mt-6 flex items-center gap-3">
