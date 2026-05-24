@@ -1,6 +1,41 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
+/// RAII guard around a claimed output path. Created via [`OutputClaim::claim`].
+///
+/// On drop, removes the file at the claimed path **only if it is still 0 bytes**.
+/// This means: if the encoder wrote anything, the file is preserved; if anything
+/// failed before the encoder wrote (sidecar spawn error, AVIF decode error,
+/// poisoned mutex, panic), the orphan zero-byte marker is cleaned up automatically.
+///
+/// The 0-byte check makes this safe to use without an explicit "commit" call —
+/// real output bytes are never destroyed by Drop.
+pub struct OutputClaim {
+    path: String,
+}
+
+impl OutputClaim {
+    pub fn claim(target: &str) -> Self {
+        Self {
+            path: resolve_output_conflict(target),
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl Drop for OutputClaim {
+    fn drop(&mut self) {
+        if let Ok(meta) = std::fs::metadata(&self.path) {
+            if meta.len() == 0 {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
 /// If `output` already exists, append `_2`, `_3`, etc. before the extension
 /// until a free path is found. Atomically claims the path by creating a
 /// zero-byte marker file, preventing TOCTOU races during parallel compression.
@@ -91,5 +126,35 @@ mod tests {
         assert_ne!(result1, result2);
         assert_eq!(result1, path_str);
         assert!(result2.ends_with("photo_2.jpg"));
+    }
+
+    #[test]
+    fn output_claim_drop_removes_empty_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orphan.jpg");
+        let path_str = path.to_str().unwrap();
+
+        {
+            let claim = OutputClaim::claim(path_str);
+            assert!(Path::new(claim.path()).exists());
+        }
+        // After drop, 0-byte marker should be cleaned up
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn output_claim_drop_preserves_written_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("real_output.jpg");
+        let path_str = path.to_str().unwrap();
+
+        {
+            let claim = OutputClaim::claim(path_str);
+            // Simulate the encoder writing real bytes to the claimed path
+            std::fs::write(claim.path(), b"compressed image data").unwrap();
+        }
+        // After drop, the real bytes must be preserved — never delete user output
+        assert!(path.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"compressed image data");
     }
 }

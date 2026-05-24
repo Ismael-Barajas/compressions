@@ -2,6 +2,25 @@
 
 All notable changes to Compressions are documented here.
 
+## [1.1.1] — 2026-04-27
+
+### New Features
+
+#### Queue Controls: Pause / Resume / Cancel All
+- New buttons appear next to the batch progress bar while compression is running
+- **Pause**: stops dequeuing new files; in-flight items finish naturally so no work is lost
+- **Resume**: continues draining the queue from where Pause stopped
+- **Cancel All**: kills every in-flight FFmpeg/Ghostscript child, stops the image batch from spawning more tasks, and reverts all in-progress and queued files back to a clean queued state — files stay in the list, ready to retry
+- Clear button is disabled during compression (previously, clicking Clear emptied the list while the backend kept compressing in the background)
+
+### Bug Fixes
+
+- **Zero-byte output marker leak**: orphaned 0-byte placeholder files left behind when an early error occurred between path-claim and encoder-spawn (e.g. AVIF decode failure, sidecar spawn error). Replaced with a self-cleaning RAII guard that removes only 0-byte markers — real output bytes are never destroyed.
+- **History pollution from Cancel All**: each killed compression no longer adds a `success: false` row to history. Cancelling a 100-file batch used to leave 100 cancellation entries; now cancelled jobs are silent.
+- **Misleading errors during cancel**: the per-file Error event is suppressed when the kill came from Cancel All, so the UI doesn't briefly flash "FFmpeg exited with code Some(-1)" while the file is being reset to queued.
+- **Started-event index drift**: video/PDF/audio batch handlers in the frontend used insertion-order indices to map `Started` events to files, which would silently corrupt UI state if the backend ever skipped a file. Now matched by `inputPath`, consistent with the image batch handler.
+- Patched [`package.json`](package.json) version (was stale at `1.0.0`).
+
 ## [1.1.0] — 2026-04-14
 
 ### New Features

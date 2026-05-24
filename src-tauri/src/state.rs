@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tauri_plugin_shell::process::CommandChild;
 
@@ -6,6 +7,12 @@ use tauri_plugin_shell::process::CommandChild;
 pub struct AppState {
     pub active_jobs: HashMap<String, (CommandChild, String)>,
 }
+
+/// Global cancel flag for the queue drain. Set by `cancel_all`, checked by long-running
+/// batch loops (notably image compression) so they can stop spawning new tasks. Lives
+/// outside `AppState` so workers can check it without taking the AppState mutex.
+#[derive(Default)]
+pub struct CancelFlag(pub Arc<AtomicBool>);
 
 /// Hardware encoders detected at startup. Read-heavy, written once.
 #[derive(Default)]

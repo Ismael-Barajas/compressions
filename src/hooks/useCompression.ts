@@ -10,10 +10,34 @@ import {
   convertVideoToGif,
   convertVideosToGifBatch,
   cancelCompression,
+  cancelAll as cancelAllBackend,
+  resetCancel,
 } from "../lib/commands";
 import { useCompressionStore } from "../stores/compressionStore";
 import { buildOutputPath, getParentDir, getAudioExtension, resolveAudioCompressionExtension } from "../lib/fileUtils";
 import type { ProgressEvent, QueuedFile } from "../types/compression";
+
+// Resolves once the store's isPaused flips back to false OR a cancel is requested.
+// Uses zustand subscribe (no polling) and immediately re-checks state to close the
+// race window between the caller reading state and us subscribing.
+function waitWhilePaused(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const check = () => {
+      const s = useCompressionStore.getState();
+      return !s.isPaused || s._cancelRequested;
+    };
+    if (check()) {
+      resolve();
+      return;
+    }
+    const unsub = useCompressionStore.subscribe((state) => {
+      if (!state.isPaused || state._cancelRequested) {
+        unsub();
+        resolve();
+      }
+    });
+  });
+}
 
 export function useCompression() {
   const setFileStatus = useCompressionStore((s) => s.setFileStatus);
@@ -34,12 +58,30 @@ export function useCompression() {
       return;
     }
 
+    useCompressionStore.getState().resetQueueControlFlags();
+    try {
+      await resetCancel();
+    } catch (err) {
+      console.warn("resetCancel failed (continuing):", err);
+    }
+
     startOperation();
 
     try {
       // Drain-loop: keep processing until no queued files remain.
       // Files added by the user during compression are picked up in the next iteration.
       while (true) {
+        // Bail-out point honored every iteration. cancelAll() sets _cancelRequested
+        // *and* kills child processes, so by the time we re-enter here the in-flight
+        // batches will have errored out and the store state has been reset.
+        if (useCompressionStore.getState()._cancelRequested) break;
+
+        // Soft pause: park the drain until the user resumes (or cancels).
+        if (useCompressionStore.getState().isPaused) {
+          await waitWhilePaused();
+          if (useCompressionStore.getState()._cancelRequested) break;
+        }
+
         const {
           files,
           videoOptions,
@@ -84,18 +126,16 @@ export function useCompression() {
                 output: buildOutputPath(f.path, getOutputDirForFile(f), undefined, outputTemplate),
               }));
 
-              const videoFileIds = videoFiles.map((f) => f.id);
-              let videoIndex = 0;
-
               const channel = new Channel<ProgressEvent>();
               channel.onmessage = (event: ProgressEvent) => {
                 switch (event.event) {
                   case "started": {
-                    const fileId = videoFileIds[videoIndex];
-                    if (fileId) {
-                      setFileStatus(fileId, "processing", event.data.jobId);
+                    // Match by inputPath rather than insertion order — robust to
+                    // any future case where the backend skips a file before sending Started.
+                    const matched = videoFiles.find((f) => f.path === event.data.inputPath);
+                    if (matched) {
+                      setFileStatus(matched.id, "processing", event.data.jobId);
                     }
-                    videoIndex++;
                     break;
                   }
                   case "progress":
@@ -113,15 +153,20 @@ export function useCompression() {
               try {
                 await compressVideosBatch(videoBatch, videoOptions, channel);
               } catch (err) {
-                for (let i = videoIndex; i < videoFileIds.length; i++) {
-                  const fid = videoFileIds[i];
-                  useCompressionStore.setState((state) => ({
-                    files: state.files.map((f) =>
-                      f.id === fid
-                        ? { ...f, status: "error" as const, error: String(err) }
-                        : f,
-                    ),
-                  }));
+                // Mark any file still queued (never started) as error.
+                for (const f of videoFiles) {
+                  const current = useCompressionStore
+                    .getState()
+                    .files.find((sf) => sf.id === f.id);
+                  if (current && current.status === "queued") {
+                    useCompressionStore.setState((state) => ({
+                      files: state.files.map((sf) =>
+                        sf.id === f.id
+                          ? { ...sf, status: "error" as const, error: String(err) }
+                          : sf,
+                      ),
+                    }));
+                  }
                 }
               }
             })(),
@@ -200,18 +245,14 @@ export function useCompression() {
                 output: buildOutputPath(f.path, getOutputDirForFile(f), "pdf", outputTemplate),
               }));
 
-              const pdfFileIds = pdfFiles.map((f) => f.id);
-              let pdfIndex = 0;
-
               const channel = new Channel<ProgressEvent>();
               channel.onmessage = (event: ProgressEvent) => {
                 switch (event.event) {
                   case "started": {
-                    const fileId = pdfFileIds[pdfIndex];
-                    if (fileId) {
-                      setFileStatus(fileId, "processing", event.data.jobId);
+                    const matched = pdfFiles.find((f) => f.path === event.data.inputPath);
+                    if (matched) {
+                      setFileStatus(matched.id, "processing", event.data.jobId);
                     }
-                    pdfIndex++;
                     break;
                   }
                   case "completed":
@@ -226,15 +267,19 @@ export function useCompression() {
               try {
                 await compressPdfsBatch(pdfBatch, pdfOptions, channel);
               } catch (err) {
-                for (let i = pdfIndex; i < pdfFileIds.length; i++) {
-                  const fid = pdfFileIds[i];
-                  useCompressionStore.setState((state) => ({
-                    files: state.files.map((f) =>
-                      f.id === fid
-                        ? { ...f, status: "error" as const, error: String(err) }
-                        : f,
-                    ),
-                  }));
+                for (const f of pdfFiles) {
+                  const current = useCompressionStore
+                    .getState()
+                    .files.find((sf) => sf.id === f.id);
+                  if (current && current.status === "queued") {
+                    useCompressionStore.setState((state) => ({
+                      files: state.files.map((sf) =>
+                        sf.id === f.id
+                          ? { ...sf, status: "error" as const, error: String(err) }
+                          : sf,
+                      ),
+                    }));
+                  }
                 }
               }
             })(),
@@ -255,18 +300,14 @@ export function useCompression() {
                 ),
               }));
 
-              const audioFileIds = audioFiles.map((f) => f.id);
-              let audioIndex = 0;
-
               const channel = new Channel<ProgressEvent>();
               channel.onmessage = (event: ProgressEvent) => {
                 switch (event.event) {
                   case "started": {
-                    const fileId = audioFileIds[audioIndex];
-                    if (fileId) {
-                      setFileStatus(fileId, "processing", event.data.jobId);
+                    const matched = audioFiles.find((f) => f.path === event.data.inputPath);
+                    if (matched) {
+                      setFileStatus(matched.id, "processing", event.data.jobId);
                     }
-                    audioIndex++;
                     break;
                   }
                   case "progress":
@@ -284,15 +325,19 @@ export function useCompression() {
               try {
                 await compressAudioBatch(audioBatch, audioCompressionOptions, channel);
               } catch (err) {
-                for (let i = audioIndex; i < audioFileIds.length; i++) {
-                  const fid = audioFileIds[i];
-                  useCompressionStore.setState((state) => ({
-                    files: state.files.map((f) =>
-                      f.id === fid
-                        ? { ...f, status: "error" as const, error: String(err) }
-                        : f,
-                    ),
-                  }));
+                for (const f of audioFiles) {
+                  const current = useCompressionStore
+                    .getState()
+                    .files.find((sf) => sf.id === f.id);
+                  if (current && current.status === "queued") {
+                    useCompressionStore.setState((state) => ({
+                      files: state.files.map((sf) =>
+                        sf.id === f.id
+                          ? { ...sf, status: "error" as const, error: String(err) }
+                          : sf,
+                      ),
+                    }));
+                  }
                 }
               }
             })(),
@@ -380,9 +425,11 @@ export function useCompression() {
       try {
         await extractAudio(file.path, output, audioOptions, channel);
       } catch (err) {
+        // Don't override a "queued" status — that means cancelAllCompression
+        // already reset the file and we should respect that.
         useCompressionStore.setState((state) => ({
           files: state.files.map((f) =>
-            f.id === file.id
+            f.id === file.id && f.status === "processing"
               ? { ...f, status: "error" as const, error: String(err) }
               : f,
           ),
@@ -448,9 +495,10 @@ export function useCompression() {
       try {
         await convertVideoToGif(file.path, output, gifOptions, channel);
       } catch (err) {
+        // Same guard as extractAudioFromFile: respect a prior cancelAll reset.
         useCompressionStore.setState((state) => ({
           files: state.files.map((f) =>
-            f.id === file.id
+            f.id === file.id && f.status === "processing"
               ? { ...f, status: "error" as const, error: String(err) }
               : f,
           ),
@@ -495,16 +543,12 @@ export function useCompression() {
       };
     });
 
-    const videoFileIds = videoFiles.map((f) => f.id);
-    let idx = 0;
-
     const channel = new Channel<ProgressEvent>();
     channel.onmessage = (event: ProgressEvent) => {
       switch (event.event) {
         case "started": {
-          const fileId = videoFileIds[idx];
-          if (fileId) setFileStatus(fileId, "processing", event.data.jobId);
-          idx++;
+          const matched = videoFiles.find((f) => f.path === event.data.inputPath);
+          if (matched) setFileStatus(matched.id, "processing", event.data.jobId);
           break;
         }
         case "progress":
@@ -569,16 +613,12 @@ export function useCompression() {
       };
     });
 
-    const videoFileIds = videoFiles.map((f) => f.id);
-    let idx = 0;
-
     const channel = new Channel<ProgressEvent>();
     channel.onmessage = (event: ProgressEvent) => {
       switch (event.event) {
         case "started": {
-          const fileId = videoFileIds[idx];
-          if (fileId) setFileStatus(fileId, "processing", event.data.jobId);
-          idx++;
+          const matched = videoFiles.find((f) => f.path === event.data.inputPath);
+          if (matched) setFileStatus(matched.id, "processing", event.data.jobId);
           break;
         }
         case "progress":
@@ -611,5 +651,36 @@ export function useCompression() {
     }
   }, [setFileStatus, updateProgress, markComplete, markError, startOperation, endOperation]);
 
-  return { startCompression, cancelFile, extractAudioFromFile, convertToGif, extractAudioFromAll, convertAllToGif };
+  const pauseCompression = useCallback(() => {
+    useCompressionStore.getState().pauseCompression();
+  }, []);
+
+  const resumeCompression = useCallback(() => {
+    useCompressionStore.getState().resumeCompression();
+  }, []);
+
+  // Stops the queue immediately: kill child processes + raise the cancel flag in
+  // Rust, then reset the store. Order matters — we set the cancel flag in the
+  // store *after* the backend kill so the drain loop, when it next checks, sees
+  // that everything has been torn down.
+  const cancelAllCompression = useCallback(async () => {
+    try {
+      await cancelAllBackend();
+    } catch (err) {
+      console.warn("cancel_all backend call failed:", err);
+    }
+    useCompressionStore.getState().cancelAllCompression();
+  }, []);
+
+  return {
+    startCompression,
+    cancelFile,
+    extractAudioFromFile,
+    convertToGif,
+    extractAudioFromAll,
+    convertAllToGif,
+    pauseCompression,
+    resumeCompression,
+    cancelAllCompression,
+  };
 }
