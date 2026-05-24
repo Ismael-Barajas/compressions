@@ -1,8 +1,9 @@
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tauri::{ipc::Channel, AppHandle};
+use tauri::{ipc::Channel, AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::Semaphore;
@@ -10,10 +11,11 @@ use uuid::Uuid;
 
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
+use crate::state::CancelFlag;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
 };
-use crate::utils::resolve_output_conflict;
+use crate::utils::OutputClaim;
 
 fn is_avif_input(path: &str) -> bool {
     Path::new(path)
@@ -134,8 +136,9 @@ pub async fn compress_image(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    // Avoid overwriting existing files — append _2, _3, etc.
-    let output = resolve_output_conflict(&output);
+    // Atomic claim with auto-cleanup on early return (e.g. AVIF/HEIC decode failure).
+    let _output_claim = OutputClaim::claim(&output);
+    let output = _output_claim.path().to_string();
 
     let _ = on_progress.send(ProgressEvent::Started {
         job_id: job_id.clone(),
@@ -213,11 +216,16 @@ pub async fn compress_image(
             Ok(result)
         }
         Err(e) => {
-            tracing::warn!(input = %input, error = %e, "Image compression failed");
-            let _ = on_progress.send(ProgressEvent::Error {
-                job_id: job_id.clone(),
-                message: e.clone(),
-            });
+            let cancelled = crate::commands::queue::is_cancelled(&app);
+            if cancelled {
+                tracing::info!(input = %input, "Image compression cancelled by user");
+            } else {
+                tracing::warn!(input = %input, error = %e, "Image compression failed");
+                let _ = on_progress.send(ProgressEvent::Error {
+                    job_id: job_id.clone(),
+                    message: e.clone(),
+                });
+            }
             let err_result = CompressionResult {
                 job_id,
                 input_path: input,
@@ -228,7 +236,10 @@ pub async fn compress_image(
                 success: false,
                 error: Some(e),
             };
-            let _ = history::append_entry(&app, HistoryEntry::from_result(&err_result, "image"));
+            if !cancelled {
+                let _ =
+                    history::append_entry(&app, HistoryEntry::from_result(&err_result, "image"));
+            }
             Ok(err_result)
         }
     }
@@ -295,13 +306,36 @@ pub async fn compress_images_batch(
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let mut handles = Vec::new();
 
+    let cancel_flag = app
+        .try_state::<CancelFlag>()
+        .map(|s| s.0.clone())
+        .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+
     for entry in files {
+        if cancel_flag.load(Ordering::SeqCst) {
+            break;
+        }
         let opts = options.clone();
         let app_clone = app.clone();
         let channel_clone = on_progress.clone();
         let sem = semaphore.clone();
+        let cancel = cancel_flag.clone();
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
+            // Re-check after acquiring the permit — by the time a queued task runs,
+            // the user may have cancelled. Skip cleanly without touching the file.
+            if cancel.load(Ordering::SeqCst) {
+                return Ok(CompressionResult {
+                    job_id: Uuid::new_v4().to_string(),
+                    input_path: entry.input.clone(),
+                    output_path: entry.output.clone(),
+                    input_size: 0,
+                    output_size: 0,
+                    duration_ms: 0,
+                    success: false,
+                    error: Some("Cancelled".to_string()),
+                });
+            }
             compress_image(app_clone, entry.input, entry.output, opts, channel_clone).await
         });
         handles.push(handle);

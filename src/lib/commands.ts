@@ -59,6 +59,14 @@ export async function cancelCompression(jobId: string): Promise<void> {
   return invoke("cancel_compression", { jobId });
 }
 
+export async function cancelAll(): Promise<void> {
+  return invoke("cancel_all");
+}
+
+export async function resetCancel(): Promise<void> {
+  return invoke("reset_cancel");
+}
+
 export async function probeFile(path: string): Promise<FileInfo> {
   return invoke("probe_file", { path });
 }

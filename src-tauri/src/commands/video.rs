@@ -15,7 +15,7 @@ use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload, VideoCodec,
     VideoOptions,
 };
-use crate::utils::resolve_output_conflict;
+use crate::utils::OutputClaim;
 use crate::validate::validate_video_options;
 
 /// Resolve which HW encoder (if any) to use for the given codec.
@@ -139,8 +139,10 @@ pub async fn compress_video(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    // Avoid overwriting existing files — append _2, _3, etc.
-    let output = resolve_output_conflict(&output);
+    // Atomically claim the path. Held for the rest of the function — its Drop
+    // cleans up the 0-byte marker if any early return fires before FFmpeg writes.
+    let _output_claim = OutputClaim::claim(&output);
+    let output = _output_claim.path().to_string();
 
     let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
 
@@ -233,14 +235,23 @@ pub async fn compress_video(
         if let Err(e) = std::fs::remove_file(&output) {
             tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
         }
-        let _ = on_progress.send(ProgressEvent::Error {
-            job_id: job_id.clone(),
-            message: result.error.clone().unwrap_or_default(),
-        });
-        tracing::warn!(input = %result.input_path, error = ?result.error, "Video compression failed");
+        // Suppress error event and history when this failure is from Cancel All.
+        // The frontend has already reset the file to queued; emitting an error
+        // would re-mark it as failed and pollute history with N cancellation rows.
+        if !crate::commands::queue::is_cancelled(&app) {
+            let _ = on_progress.send(ProgressEvent::Error {
+                job_id: job_id.clone(),
+                message: result.error.clone().unwrap_or_default(),
+            });
+            tracing::warn!(input = %result.input_path, error = ?result.error, "Video compression failed");
+        } else {
+            tracing::info!(input = %result.input_path, "Video compression cancelled by user");
+        }
     }
-    if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "video")) {
-        tracing::warn!(error = %e, "Failed to save history entry");
+    if success || !crate::commands::queue::is_cancelled(&app) {
+        if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "video")) {
+            tracing::warn!(error = %e, "Failed to save history entry");
+        }
     }
     Ok(result)
 }

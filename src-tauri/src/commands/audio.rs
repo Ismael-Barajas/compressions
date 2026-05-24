@@ -15,7 +15,7 @@ use crate::types::{
     AudioCompressionOptions, AudioExtractionOptions, BatchEntry, CompressionResult, HistoryEntry,
     ProgressEvent, ProgressPayload,
 };
-use crate::utils::resolve_output_conflict;
+use crate::utils::OutputClaim;
 use crate::validate::{validate_audio_compression_options, validate_audio_options};
 
 #[tauri::command]
@@ -43,8 +43,9 @@ pub async fn extract_audio(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    // Avoid overwriting existing files — append _2, _3, etc.
-    let output = resolve_output_conflict(&output);
+    // Atomic claim with auto-cleanup on early return.
+    let _output_claim = OutputClaim::claim(&output);
+    let output = _output_claim.path().to_string();
 
     let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
 
@@ -118,27 +119,34 @@ pub async fn extract_audio(
                     },
                 };
 
+                let cancelled = crate::commands::queue::is_cancelled(&app);
                 if success {
                     let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
                 } else {
                     if let Err(e) = std::fs::remove_file(&output) {
                         tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
                     }
-                    let _ = on_progress.send(ProgressEvent::Error {
-                        job_id: job_id.clone(),
-                        message: result.error.clone().unwrap_or_default(),
-                    });
+                    if !cancelled {
+                        let _ = on_progress.send(ProgressEvent::Error {
+                            job_id: job_id.clone(),
+                            message: result.error.clone().unwrap_or_default(),
+                        });
+                    }
                 }
 
                 if result.success {
                     tracing::info!(input = %result.input_path, duration_ms = result.duration_ms, "Audio extraction completed");
+                } else if cancelled {
+                    tracing::info!(input = %result.input_path, "Audio extraction cancelled by user");
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "Audio extraction failed");
                 }
-                if let Err(e) =
-                    history::append_entry(&app, HistoryEntry::from_result(&result, "audio"))
-                {
-                    tracing::warn!(error = %e, "Failed to save history entry");
+                if success || !cancelled {
+                    if let Err(e) =
+                        history::append_entry(&app, HistoryEntry::from_result(&result, "audio"))
+                    {
+                        tracing::warn!(error = %e, "Failed to save history entry");
+                    }
                 }
                 return Ok(result);
             }
@@ -197,7 +205,8 @@ pub async fn compress_audio(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    let output = resolve_output_conflict(&output);
+    let _output_claim = OutputClaim::claim(&output);
+    let output = _output_claim.path().to_string();
 
     let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
 
@@ -277,27 +286,34 @@ pub async fn compress_audio(
                     },
                 };
 
+                let cancelled = crate::commands::queue::is_cancelled(&app);
                 if success {
                     let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
                 } else {
                     if let Err(e) = std::fs::remove_file(&output) {
                         tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
                     }
-                    let _ = on_progress.send(ProgressEvent::Error {
-                        job_id: job_id.clone(),
-                        message: result.error.clone().unwrap_or_default(),
-                    });
+                    if !cancelled {
+                        let _ = on_progress.send(ProgressEvent::Error {
+                            job_id: job_id.clone(),
+                            message: result.error.clone().unwrap_or_default(),
+                        });
+                    }
                 }
 
                 if result.success {
                     tracing::info!(input = %result.input_path, duration_ms = result.duration_ms, "Audio compression completed");
+                } else if cancelled {
+                    tracing::info!(input = %result.input_path, "Audio compression cancelled by user");
                 } else {
                     tracing::warn!(input = %result.input_path, error = ?result.error, "Audio compression failed");
                 }
-                if let Err(e) =
-                    history::append_entry(&app, HistoryEntry::from_result(&result, "audio"))
-                {
-                    tracing::warn!(error = %e, "Failed to save history entry");
+                if success || !cancelled {
+                    if let Err(e) =
+                        history::append_entry(&app, HistoryEntry::from_result(&result, "audio"))
+                    {
+                        tracing::warn!(error = %e, "Failed to save history entry");
+                    }
                 }
                 return Ok(result);
             }

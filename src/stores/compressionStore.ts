@@ -78,6 +78,9 @@ interface CompressionStore {
   showThumbnails: boolean;
   isCompressing: boolean;
   _activeOps: number;
+  isPaused: boolean;
+  // Internal flag the drain loop in useCompression checks each iteration to bail out.
+  _cancelRequested: boolean;
 
   addFiles: (files: QueuedFile[]) => void;
   removeFile: (id: string) => void;
@@ -109,6 +112,14 @@ interface CompressionStore {
   startOperation: () => void;
   endOperation: () => void;
   retryFile: (id: string) => void;
+  pauseCompression: () => void;
+  resumeCompression: () => void;
+  // Reverts every processing/queued file back to a fresh queued state and signals
+  // the drain loop to bail. Does NOT kill child processes — callers must invoke
+  // the cancel_all Tauri command alongside this for full cancellation.
+  cancelAllCompression: () => void;
+  // Clears pause/cancel flags. Called at the start of a fresh drain.
+  resetQueueControlFlags: () => void;
 }
 
 function getInitialTheme(): "light" | "dark" {
@@ -153,6 +164,8 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   showThumbnails: getStoredThumbnails(),
   isCompressing: false,
   _activeOps: 0,
+  isPaused: false,
+  _cancelRequested: false,
 
   addFiles: (newFiles) =>
     set((state) => {
@@ -326,6 +339,30 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
           : f,
       ),
     })),
+
+  pauseCompression: () => set({ isPaused: true }),
+
+  resumeCompression: () => set({ isPaused: false }),
+
+  cancelAllCompression: () =>
+    set((state) => ({
+      _cancelRequested: true,
+      isPaused: false,
+      files: state.files.map((f) =>
+        f.status === "processing" || f.status === "queued"
+          ? {
+              ...f,
+              status: "queued" as const,
+              progress: 0,
+              jobId: undefined,
+              error: undefined,
+              result: undefined,
+            }
+          : f,
+      ),
+    })),
+
+  resetQueueControlFlags: () => set({ isPaused: false, _cancelRequested: false }),
 }));
 
 export { DEFAULT_VIDEO_OPTIONS, DEFAULT_IMAGE_OPTIONS, DEFAULT_AUDIO_OPTIONS, DEFAULT_AUDIO_COMPRESSION_OPTIONS, DEFAULT_GIF_OPTIONS, DEFAULT_PDF_OPTIONS };

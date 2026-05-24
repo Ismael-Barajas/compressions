@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from "react";
-import { Plus, Trash2, Play, FolderOpen, LayoutGrid, LayoutList } from "lucide-react";
+import { Plus, Trash2, Play, Pause, Square, FolderOpen, LayoutGrid, LayoutList } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
@@ -22,10 +22,11 @@ export function FileList() {
   const files = useCompressionStore((s) => s.files);
   const clearFiles = useCompressionStore((s) => s.clearFiles);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
+  const isPaused = useCompressionStore((s) => s.isPaused);
   const showThumbnails = useCompressionStore((s) => s.showThumbnails);
   const toggleThumbnails = useCompressionStore((s) => s.toggleThumbnails);
   const setThumbnailPath = useCompressionStore((s) => s.setThumbnailPath);
-  const { startCompression } = useCompression();
+  const { startCompression, pauseCompression, resumeCompression, cancelAllCompression } = useCompression();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inFlightRef = useRef(new Set<string>());
@@ -180,7 +181,12 @@ export function FileList() {
             <FolderOpen size={13} />
             Folder
           </ToolbarButton>
-          <ToolbarButton onClick={clearFiles} danger>
+          <ToolbarButton
+            onClick={clearFiles}
+            danger
+            disabled={isCompressing}
+            title={isCompressing ? "Cancel compression first" : undefined}
+          >
             <Trash2 size={13} />
             Clear
           </ToolbarButton>
@@ -227,7 +233,7 @@ export function FileList() {
         )}
       </div>
 
-      {/* Compress button */}
+      {/* Queue controls */}
       {!isCompressing && files.some((f) => f.status === "queued") && (
         <div className="mt-4 flex justify-center">
           <button
@@ -239,6 +245,35 @@ export function FileList() {
           </button>
         </div>
       )}
+      {isCompressing && (
+        <div className="mt-4 flex justify-center gap-2">
+          {isPaused ? (
+            <button
+              className="btn-primary flex items-center gap-2 px-6 py-2.5 text-[15px]"
+              onClick={resumeCompression}
+            >
+              <Play size={16} fill="currentColor" />
+              Resume
+            </button>
+          ) : (
+            <button
+              className="btn-secondary flex items-center gap-2 px-6 py-2.5 text-[15px]"
+              onClick={pauseCompression}
+            >
+              <Pause size={16} fill="currentColor" />
+              Pause
+            </button>
+          )}
+          <button
+            className="btn-secondary flex items-center gap-2 px-6 py-2.5 text-[15px]"
+            style={{ color: "var(--error)" }}
+            onClick={cancelAllCompression}
+          >
+            <Square size={14} fill="currentColor" />
+            Cancel All
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -246,21 +281,27 @@ export function FileList() {
 function ToolbarButton({
   children,
   danger,
+  disabled,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { danger?: boolean }) {
   return (
     <button
       className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors duration-100"
+      disabled={disabled}
       style={{
         color: danger ? "var(--error)" : "var(--text-secondary)",
         border: "1px solid var(--border)",
         backgroundColor: "transparent",
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
       }}
       onMouseEnter={(e) => {
+        if (disabled) return;
         e.currentTarget.style.borderColor = danger ? "var(--error)" : "var(--border-hover)";
         e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
       }}
       onMouseLeave={(e) => {
+        if (disabled) return;
         e.currentTarget.style.borderColor = "var(--border)";
         e.currentTarget.style.backgroundColor = "transparent";
       }}

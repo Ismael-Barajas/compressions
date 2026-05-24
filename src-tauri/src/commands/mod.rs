@@ -7,6 +7,7 @@ pub mod logs;
 pub mod pdf;
 pub mod presets;
 pub mod probe;
+pub mod queue;
 pub mod scan;
 pub mod thumbnail;
 pub mod video;
