@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Moon, Sun, Clock, Terminal, Download, RefreshCw, Info } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useHistoryStore } from "../../stores/historyStore";
 import { useLogStore } from "../../stores/logStore";
@@ -60,7 +61,14 @@ function UpdateButton() {
   const { updateAvailable, updateVersion, checking, checkForUpdate, installUpdate } =
     useUpdateCheck(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getVersion()
+      .then(setCurrentVersion)
+      .catch(() => setCurrentVersion(null));
+  }, []);
 
   // Close popover on outside click
   useEffect(() => {
@@ -136,7 +144,7 @@ function UpdateButton() {
           ) : (
             <div className="flex flex-col gap-2">
               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-                Compressions v1.0.0
+                {currentVersion ? `Compressions v${currentVersion}` : "Compressions"}
               </span>
               <button
                 onClick={checkForUpdate}
