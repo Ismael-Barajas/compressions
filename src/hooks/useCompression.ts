@@ -15,6 +15,7 @@ import {
 } from "../lib/commands";
 import { useCompressionStore } from "../stores/compressionStore";
 import { buildOutputPath, getParentDir, getAudioExtension, resolveAudioCompressionExtension } from "../lib/fileUtils";
+import { sortQueuedFilesForCompression } from "../lib/scheduling";
 import type { ProgressEvent, QueuedFile } from "../types/compression";
 
 // Resolves once the store's isPaused flips back to false OR a cancel is requested.
@@ -110,10 +111,10 @@ export function useCompression() {
           }
         };
 
-        const videoFiles = queued.filter((f) => f.mediaType === "video");
-        const imageFiles = queued.filter((f) => f.mediaType === "image");
-        const pdfFiles = queued.filter((f) => f.mediaType === "pdf");
-        const audioFiles = queued.filter((f) => f.mediaType === "audio");
+        const videoFiles = sortQueuedFilesForCompression(queued, "video");
+        const imageFiles = sortQueuedFilesForCompression(queued, "image");
+        const pdfFiles = sortQueuedFilesForCompression(queued, "pdf");
+        const audioFiles = sortQueuedFilesForCompression(queued, "audio");
 
         const promises: Promise<void>[] = [];
 

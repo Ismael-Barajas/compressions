@@ -49,24 +49,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
       # ── Platform dependencies ────────────────────────────────────────
 
-      - name: Install NASM (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: ilammy/setup-nasm@v1
 
       - name: Install Tauri deps (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
         run: sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
-      - name: Install NASM (macOS)
-        if: matrix.platform == 'macos-latest'
-        run: brew install nasm
-
-      - name: Install NASM + 7-Zip (Windows)
+      - name: Install 7-Zip (Windows)
         if: matrix.platform == 'windows-latest'
-        run: choco install nasm 7zip -y
+        run: choco install 7zip -y
 
       # ── Download sidecars ────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -33,21 +33,29 @@ fn is_heic_input(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Decode an AVIF file to a temporary PNG via FFmpeg sidecar (preserves RGBA transparency).
-async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
-    let temp_dir = std::env::temp_dir();
-    let temp_name = format!("compressions_avif_{}.png", Uuid::new_v4());
-    let temp_path = temp_dir.join(temp_name);
-    let temp_str = temp_path.to_string_lossy().to_string();
+// QOI: fast single-pass encode (unlike PNG deflate), still compressed (unlike BMP),
+// and preserves RGBA — FFmpeg's 32-bit BMP output uses BI_RGB, which the image
+// crate decodes as RGB32 and drops the alpha channel.
+fn image_decode_temp_path(kind: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("compressions_{}_{}.qoi", kind, Uuid::new_v4()))
+}
 
-    let args: Vec<String> = vec![
+fn build_ffmpeg_image_decode_args(input: &str, output: &str) -> Vec<String> {
+    vec![
         "-y".into(),
         "-i".into(),
         input.into(),
         "-pix_fmt".into(),
         "rgba".into(),
-        temp_str.clone(),
-    ];
+        output.into(),
+    ]
+}
+
+/// Decode an AVIF file to a temporary QOI via FFmpeg sidecar (preserves RGBA transparency).
+async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
+    let temp_path = image_decode_temp_path("avif");
+    let temp_str = temp_path.to_string_lossy().to_string();
+    let args = build_ffmpeg_image_decode_args(input, &temp_str);
 
     let (mut rx, _child) = app
         .shell()
@@ -73,21 +81,11 @@ async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, 
     Err("FFmpeg AVIF decode process ended unexpectedly".to_string())
 }
 
-/// Decode a HEIC/HEIF file to a temporary PNG via FFmpeg sidecar.
+/// Decode a HEIC/HEIF file to a temporary QOI via FFmpeg sidecar.
 async fn decode_heic_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
-    let temp_dir = std::env::temp_dir();
-    let temp_name = format!("compressions_heic_{}.png", Uuid::new_v4());
-    let temp_path = temp_dir.join(temp_name);
+    let temp_path = image_decode_temp_path("heic");
     let temp_str = temp_path.to_string_lossy().to_string();
-
-    let args: Vec<String> = vec![
-        "-y".into(),
-        "-i".into(),
-        input.into(),
-        "-pix_fmt".into(),
-        "rgba".into(),
-        temp_str.clone(),
-    ];
+    let args = build_ffmpeg_image_decode_args(input, &temp_str);
 
     let (mut rx, _child) = app
         .shell()
@@ -153,7 +151,7 @@ pub async fn compress_image(
     let mut resolved_options = options.clone();
     resolved_options.format = effective_format.clone();
 
-    // If input is AVIF or HEIC, decode via FFmpeg to a temp PNG first (image crate can't decode these)
+    // If input is AVIF or HEIC, decode via FFmpeg to a temp QOI first (image crate can't decode these)
     let decode_temp = if is_avif_input(&input) {
         Some(decode_avif_via_ffmpeg(&app, &input).await?)
     } else if is_heic_input(&input) {
@@ -376,4 +374,24 @@ pub async fn compress_images_batch(
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_temp_path_uses_qoi_extension() {
+        let temp = image_decode_temp_path("avif");
+
+        assert_eq!(temp.extension().and_then(|e| e.to_str()), Some("qoi"));
+    }
+
+    #[test]
+    fn ffmpeg_decode_args_use_rgba_for_qoi() {
+        let args = build_ffmpeg_image_decode_args("in.avif", "out.qoi");
+
+        assert!(args.windows(2).any(|pair| pair == ["-pix_fmt", "rgba"]));
+        assert_eq!(args.last().map(String::as_str), Some("out.qoi"));
+    }
 }
