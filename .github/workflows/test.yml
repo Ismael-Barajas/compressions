@@ -3,6 +3,11 @@ name: Tests
 on:
   workflow_dispatch: # disabled — re-enable workflow_call to re-activate
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,6 +25,11 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Check version manifests
+        run: npm run version:check
+
+      - run: npx tsc --noEmit
 
       - name: Run tests
         run: npm run test:run -- --reporter=verbose --reporter=json --outputFile=vitest-results.json
@@ -63,8 +73,6 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
           EOF
 
-      - run: npx tsc --noEmit
-
   rust-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,9 +86,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: ci-${{ runner.os }}
+          cache-on-failure: true
+
+      - uses: ilammy/setup-nasm@v1
 
       - name: Install deps
-        run: sudo apt-get update && sudo apt-get install -y nasm libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - name: Create sidecar stubs
         run: |
@@ -111,19 +123,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: ci-${{ runner.os }}
+          cache-on-failure: true
 
       # NASM is required for mozjpeg
-      - name: Install NASM (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y nasm
-
-      - name: Install NASM (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install nasm
-
-      - name: Install NASM (Windows)
-        if: matrix.os == 'windows-latest'
-        run: choco install nasm -y
+      - uses: ilammy/setup-nasm@v1
 
       # Tauri build deps for Ubuntu
       - name: Install Tauri deps (Ubuntu)
@@ -187,7 +191,6 @@ jobs:
 
   rust-benchmarks:
     needs: [rust-tests]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -198,9 +201,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: ci-${{ runner.os }}
+          cache-on-failure: true
+
+      - uses: ilammy/setup-nasm@v1
 
       - name: Install deps
-        run: sudo apt-get update && sudo apt-get install -y nasm libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - name: Create sidecar stubs
         run: |

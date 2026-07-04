@@ -136,7 +136,7 @@ function UpdateButton() {
           ) : (
             <div className="flex flex-col gap-2">
               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-                Compressions v1.0.0
+                Compressions v{__APP_VERSION__}
               </span>
               <button
                 onClick={checkForUpdate}

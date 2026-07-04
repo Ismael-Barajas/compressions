@@ -1,15 +1,24 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import path from "path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const root = dirname(fileURLToPath(import.meta.url));
 const host = process.env.TAURI_DEV_HOST;
+const { version: appVersion } = JSON.parse(
+  readFileSync(resolve(root, "package.json"), "utf-8"),
+) as { version: string };
 
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": resolve(root, "src"),
     },
   },
   clearScreen: false,
@@ -40,4 +49,4 @@ export default defineConfig(async () => ({
       include: ["src/**/*.ts", "src/**/*.tsx"],
     },
   },
-}));
+});

@@ -2,6 +2,19 @@
 
 All notable changes to Compressions are documented here.
 
+## [1.1.2] — 2026-07-02
+
+### Performance
+
+- **Smarter batch ordering**: video, PDF, and audio queues now process smaller files first; image batches start with larger files to keep parallel workers busy
+- **Faster PNG compression**: quick RGBA pre-encode plus lighter oxipng preset reduces PNG encode time
+- **Faster AVIF/HEIC decode**: FFmpeg intermediate files use QOI instead of PNG — less disk I/O and full alpha preservation
+
+### Bug Fixes
+
+- **History corruption under parallel compression**: concurrent image job completions no longer race on the history file
+- **History file size**: history is written as compact JSON instead of pretty-printed
+
 ## [1.1.1] — 2026-04-27
 
 ### New Features

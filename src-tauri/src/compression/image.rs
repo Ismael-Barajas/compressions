@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::imageops::FilterType;
 use image::DynamicImage;
+use image::ImageEncoder;
 
 use crate::types::{ImageFormat, ImageOptions, ResizeMode};
 
@@ -115,11 +117,15 @@ fn encode_jpeg(
 
 fn encode_png(img: &DynamicImage, output: &str, preserve_metadata: bool) -> Result<(), String> {
     let mut buf = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut buf);
-    img.write_to(&mut cursor, image::ImageFormat::Png)
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let encoder =
+        PngEncoder::new_with_quality(&mut buf, CompressionType::Fast, PngFilterType::Adaptive);
+    encoder
+        .write_image(rgba.as_raw(), width, height, image::ColorType::Rgba8.into())
         .map_err(|e| format!("Failed to encode PNG: {}", e))?;
 
-    let mut opts = oxipng::Options::from_preset(4);
+    let mut opts = oxipng::Options::from_preset(2);
     opts.strip = if preserve_metadata {
         oxipng::StripChunks::None
     } else {
