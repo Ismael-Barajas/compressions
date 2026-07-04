@@ -26,6 +26,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Check version manifests
+        run: npm run version:check
+
       - run: npx tsc --noEmit
 
       - name: Run tests
