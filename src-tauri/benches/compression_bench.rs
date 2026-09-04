@@ -251,14 +251,7 @@ fn bench_jpeg_resize(c: &mut Criterion) {
     });
 
     c.bench_function("jpeg_q80_resize_4k_to_1280", |b| {
-        b.iter(|| {
-            compress(
-                input.to_str().unwrap(),
-                output.to_str().unwrap(),
-                &options,
-            )
-            .unwrap()
-        })
+        b.iter(|| compress(input.to_str().unwrap(), output.to_str().unwrap(), &options).unwrap())
     });
 }
 
