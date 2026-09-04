@@ -237,18 +237,6 @@ pub struct CompressionResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FileInfo {
-    pub path: String,
-    pub file_name: String,
-    pub size: u64,
-    pub media_type: MediaType,
-    pub duration: Option<f64>,
-    pub resolution: Option<Resolution>,
-    pub codec_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProbeEvent {
     pub path: String,
     pub size: u64,
@@ -279,6 +267,10 @@ pub enum ProgressEvent {
 pub struct BatchEntry {
     pub input: String,
     pub output: String,
+    /// Media duration in seconds as probed when the file was added. When present the
+    /// backend skips its own ffprobe call before encoding.
+    #[serde(default)]
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,18 +312,6 @@ pub struct LogEntry {
     pub level: String,
     pub message: String,
     pub target: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Preset {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub is_builtin: bool,
-    pub media_type: MediaType,
-    pub video_options: Option<VideoOptions>,
-    pub image_options: Option<ImageOptions>,
 }
 
 #[cfg(test)]

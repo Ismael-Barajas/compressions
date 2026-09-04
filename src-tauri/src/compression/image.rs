@@ -8,6 +8,20 @@ use image::ImageEncoder;
 use crate::types::{ImageFormat, ImageOptions, ResizeMode};
 
 pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(), String> {
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    compress_with_threads(input, output, options, threads)
+}
+
+/// Like [`compress`], with an explicit thread budget for encoders that parallelize
+/// internally (AVIF).
+pub fn compress_with_threads(
+    input: &str,
+    output: &str,
+    options: &ImageOptions,
+    threads: usize,
+) -> Result<(), String> {
     // GIF inputs always re-encode as animated GIF regardless of the selected format
     let input_ext = Path::new(input)
         .extension()
@@ -54,7 +68,7 @@ pub fn compress(input: &str, output: &str, options: &ImageOptions) -> Result<(),
         ImageFormat::Jpeg => encode_jpeg(&img, input, output, options.quality, preserve),
         ImageFormat::Png => encode_png(&img, output, preserve),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
-        ImageFormat::Avif => encode_avif(&img, output, options.quality),
+        ImageFormat::Avif => encode_avif(&img, output, options.quality, threads),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
         ImageFormat::Heic => Err(
             "HEIC output encoding is not supported by the native encoder; use FFmpeg pipeline"
@@ -171,7 +185,12 @@ fn encode_webp(
     std::fs::write(output, data).map_err(|e| format!("Failed to write WebP: {}", e))
 }
 
-fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), String> {
+fn encode_avif(
+    img: &DynamicImage,
+    output: &str,
+    quality: u8,
+    threads: usize,
+) -> Result<(), String> {
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
 
@@ -190,7 +209,7 @@ fn encode_avif(img: &DynamicImage, output: &str, quality: u8) -> Result<(), Stri
     let res = ravif::Encoder::new()
         .with_quality(quality as f32)
         .with_speed(6)
-        .with_num_threads(Some(4))
+        .with_num_threads(Some(threads.max(1)))
         .encode_rgba(img_ref)
         .map_err(|e| format!("Failed to encode AVIF: {}", e))?;
 
@@ -365,7 +384,7 @@ mod tests {
         .unwrap();
 
         let data = std::fs::read(&output).unwrap();
-        assert!(data.len() > 0);
+        assert!(!data.is_empty());
         // JPEG magic bytes: FF D8 FF
         assert_eq!(&data[0..2], &[0xFF, 0xD8]);
     }
@@ -424,7 +443,7 @@ mod tests {
         .unwrap();
 
         let data = std::fs::read(&output).unwrap();
-        assert!(data.len() > 0);
+        assert!(!data.is_empty());
     }
 
     #[test]

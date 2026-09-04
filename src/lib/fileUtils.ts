@@ -1,27 +1,10 @@
-import type { AudioCompressionFormat, MediaType, QueuedFile } from "../types/compression";
-
-const VIDEO_EXTENSIONS = new Set([
-  ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts",
-]);
-
-const IMAGE_EXTENSIONS = new Set([
-  ".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tiff", ".tif", ".gif", ".heic", ".heif",
-]);
-
-const PDF_EXTENSIONS = new Set([".pdf"]);
-
-const AUDIO_EXTENSIONS = new Set([
-  ".mp3", ".aac", ".m4a", ".flac", ".wav", ".ogg", ".opus", ".wma",
-  ".aiff", ".ape", ".alac", ".ac3", ".dts", ".pcm", ".amr",
-]);
+import type { AudioCompressionFormat, MediaType, OutputMode, QueuedFile } from "../types/compression";
+import { mediaTypeForExtension } from "./mediaTypes";
 
 export function getMediaType(filePath: string): MediaType | null {
-  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
-  if (VIDEO_EXTENSIONS.has(ext)) return "video";
-  if (IMAGE_EXTENSIONS.has(ext)) return "image";
-  if (PDF_EXTENSIONS.has(ext)) return "pdf";
-  if (AUDIO_EXTENSIONS.has(ext)) return "audio";
-  return null;
+  const dot = filePath.lastIndexOf(".");
+  if (dot < 0) return null;
+  return mediaTypeForExtension(filePath.slice(dot));
 }
 
 export function getFileName(filePath: string): string {
@@ -43,10 +26,19 @@ export function getSavingsPercent(inputSize: number, outputSize: number): number
   return Math.round(((inputSize - outputSize) / inputSize) * 100);
 }
 
+/** Values for the `{date}` / `{time}` template tokens. Compute once per batch so
+ * every file in the batch shares the same stamp. */
+export function templateStamp(now: Date = new Date()): { date: string; time: string } {
+  const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+  return { date, time };
+}
+
 export function getOutputFileName(
   inputPath: string,
   format?: string,
   template: string = "{name}_compressed",
+  stamp: { date: string; time: string } = templateStamp(),
 ): string {
   const sep = inputPath.includes("\\") ? "\\" : "/";
   const parts = inputPath.split(sep);
@@ -61,17 +53,13 @@ export function getOutputFileName(
       ? `.${format.toLowerCase()}`
       : inputExt;
 
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
-  const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
-
   // Sanitize name to prevent path traversal via crafted filenames
   const safeName = name.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
 
   const baseName = template
     .replace(/\{name\}/g, safeName)
-    .replace(/\{date\}/g, date)
-    .replace(/\{time\}/g, time);
+    .replace(/\{date\}/g, stamp.date)
+    .replace(/\{time\}/g, stamp.time);
 
   return `${baseName || name}${ext}`;
 }
@@ -126,10 +114,39 @@ export function buildOutputPath(
   outputDir: string,
   format?: string,
   template?: string,
+  stamp?: { date: string; time: string },
 ): string {
   const sep = outputDir.includes("\\") ? "\\" : "/";
-  const outputName = getOutputFileName(inputPath, format, template);
+  const outputName = getOutputFileName(inputPath, format, template, stamp);
   return `${outputDir}${sep}${outputName}`;
+}
+
+/** Output directory for `filePath` under the given output settings. */
+export function resolveOutputDir(
+  filePath: string,
+  settings: { outputMode: OutputMode; outputDir: string | null; subfolderName: string },
+): string {
+  const parentDir = getParentDir(filePath);
+  switch (settings.outputMode) {
+    case "subfolder": {
+      const sep = parentDir.includes("\\") ? "\\" : "/";
+      return `${parentDir}${sep}${settings.subfolderName}`;
+    }
+    case "customDir":
+      return settings.outputDir || parentDir;
+    default:
+      return parentDir;
+  }
+}
+
+/** Extensions that can be re-encoded in place when the image format is "Original".
+ * `undefined` keeps the input extension; formats with no encoder become PNG. */
+const KEEP_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"]);
+
+export function resolveImageOutputFormat(format: string, inputPath: string): string | undefined {
+  if (format !== "Original") return format.toLowerCase();
+  const ext = inputPath.slice(inputPath.lastIndexOf(".")).toLowerCase();
+  return KEEP_IMAGE_EXTENSIONS.has(ext) ? undefined : "png";
 }
 
 /** Convert resolved file paths into QueuedFile objects, filtering unsupported types. */

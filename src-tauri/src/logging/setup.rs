@@ -3,11 +3,21 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::types::LogEntry;
 
 const MAX_LOG_LINES: usize = 2000;
+/// Daily files kept on disk. Older ones are pruned by the appender.
+const MAX_LOG_FILES: usize = 7;
+const LOG_FILE_PREFIX: &str = "compressions";
+const LOG_FILE_SUFFIX: &str = "log";
+
+fn is_log_file(name: &str) -> bool {
+    // Current naming: compressions.YYYY-MM-DD.log; legacy: compressions.log.YYYY-MM-DD
+    name.starts_with(LOG_FILE_PREFIX) && (name.ends_with(".log") || name.contains(".log."))
+}
 
 pub fn log_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -20,13 +30,22 @@ pub fn log_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn log_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(log_dir(app)?.join("compressions.log"))
+    Ok(log_dir(app)?.join(format!("{}.{}", LOG_FILE_PREFIX, LOG_FILE_SUFFIX)))
 }
 
 /// Initialize tracing with dual output: stderr + rolling log file.
 /// Returns the WorkerGuard which must be held for the lifetime of the app.
 pub fn init_tracing(log_dir: PathBuf) -> WorkerGuard {
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "compressions.log");
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix(LOG_FILE_PREFIX)
+        .filename_suffix(LOG_FILE_SUFFIX)
+        .max_log_files(MAX_LOG_FILES)
+        .build(&log_dir)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to build rolling log appender ({}); falling back", e);
+            tracing_appender::rolling::daily(&log_dir, "compressions.log")
+        });
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     let env_filter = EnvFilter::try_from_default_env()
@@ -46,14 +65,15 @@ pub fn init_tracing(log_dir: PathBuf) -> WorkerGuard {
     guard
 }
 
-/// Read log entries from the current log file, returning the most recent `max_lines`.
+/// Read the most recent `max_lines` log entries. Files are visited newest-first
+/// and reading stops as soon as enough lines are collected, so a week of logs is
+/// never parsed to show the last two thousand.
 pub fn read_log_entries(
     app: &AppHandle,
     max_lines: Option<usize>,
 ) -> Result<Vec<LogEntry>, String> {
     let dir = log_dir(app)?;
 
-    // Find all log files and sort them (most recent last)
     let mut log_files: Vec<PathBuf> = fs::read_dir(&dir)
         .map_err(|e| format!("Failed to read log dir: {}", e))?
         .filter_map(|entry| entry.ok())
@@ -61,37 +81,40 @@ pub fn read_log_entries(
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("compressions.log"))
+                .map(is_log_file)
                 .unwrap_or(false)
         })
         .collect();
+    // Date-stamped names sort chronologically; newest last.
     log_files.sort();
 
     let limit = max_lines.unwrap_or(MAX_LOG_LINES);
-    let mut entries = Vec::new();
+    let mut newest_first: Vec<LogEntry> = Vec::with_capacity(limit.min(4096));
 
-    for path in &log_files {
+    for path in log_files.iter().rev() {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        for line in content.lines() {
+        for line in content.lines().rev() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
             if let Some(entry) = parse_log_line(line) {
-                entries.push(entry);
+                newest_first.push(entry);
+                if newest_first.len() >= limit {
+                    break;
+                }
             }
+        }
+        if newest_first.len() >= limit {
+            break;
         }
     }
 
-    // Keep only the most recent entries
-    if entries.len() > limit {
-        entries.drain(..entries.len() - limit);
-    }
-
-    Ok(entries)
+    newest_first.reverse();
+    Ok(newest_first)
 }
 
 /// Parse a tracing fmt log line like:
@@ -163,7 +186,7 @@ pub fn clear_logs(app: &AppHandle) -> Result<(), String> {
         if path
             .file_name()
             .and_then(|n| n.to_str())
-            .map(|n| n.starts_with("compressions.log"))
+            .map(is_log_file)
             .unwrap_or(false)
         {
             let _ = fs::remove_file(&path);
@@ -219,5 +242,14 @@ mod tests {
     #[test]
     fn garbage_returns_none() {
         assert!(parse_log_line("just some random text").is_none());
+    }
+
+    #[test]
+    fn recognizes_current_and_legacy_log_names() {
+        assert!(is_log_file("compressions.2026-09-04.log"));
+        assert!(is_log_file("compressions.log.2026-09-04"));
+        assert!(is_log_file("compressions.log"));
+        assert!(!is_log_file("history.json"));
+        assert!(!is_log_file("other.log"));
     }
 }

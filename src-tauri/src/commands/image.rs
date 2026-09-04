@@ -9,6 +9,7 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::commands::job::keep_original_if_larger;
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
 use crate::state::CancelFlag;
@@ -111,12 +112,15 @@ async fn decode_heic_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, 
     Err("FFmpeg HEIC decode process ended unexpectedly".to_string())
 }
 
-#[tauri::command]
+/// Compress one image. `encoder_threads` bounds the threads used by encoders that
+/// parallelize internally (AVIF, PNG) so a batch of N concurrent jobs does not
+/// oversubscribe the machine.
 pub async fn compress_image(
     app: AppHandle,
     input: String,
     output: String,
     options: ImageOptions,
+    encoder_threads: usize,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     let job_id = Uuid::new_v4().to_string();
@@ -126,11 +130,15 @@ pub async fn compress_image(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+    let input_size = tokio::fs::metadata(&input)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     // Ensure the output directory exists (needed for subfolder export mode)
     if let Some(parent) = Path::new(&output).parent() {
-        std::fs::create_dir_all(parent)
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
@@ -172,7 +180,12 @@ pub async fn compress_image(
         let input_for_compress = effective_input.to_string();
         let output_clone = output.clone();
         tokio::task::spawn_blocking(move || {
-            img_compress::compress(&input_for_compress, &output_clone, &resolved_options)
+            img_compress::compress_with_threads(
+                &input_for_compress,
+                &output_clone,
+                &resolved_options,
+                encoder_threads,
+            )
         })
         .await
         .map_err(|e| format!("Task join error: {}", e))?
@@ -180,22 +193,21 @@ pub async fn compress_image(
 
     // Clean up decode temp file (AVIF or HEIC)
     if let Some(ref temp) = decode_temp {
-        let _ = std::fs::remove_file(temp);
+        let _ = tokio::fs::remove_file(temp).await;
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
     match compression_result {
         Ok(()) => {
-            let mut output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+            let output_size = tokio::fs::metadata(&output)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
 
-            // If compressed is larger or equal, copy original to output (keep the smaller file)
-            if output_size >= input_size && input_size > 0 {
-                if let Err(e) = std::fs::copy(&input, &output) {
-                    return Err(format!("Failed to copy original to output: {}", e));
-                }
-                output_size = input_size;
-            }
+            // If compressed is larger or equal, keep the smaller original.
+            let output_size =
+                keep_original_if_larger(&input, &output, input_size, output_size).await;
 
             let result = CompressionResult {
                 job_id: job_id.clone(),
@@ -298,9 +310,13 @@ pub async fn compress_images_batch(
     options: ImageOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let max_concurrent = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
         .unwrap_or(4);
+    let max_concurrent = cores.min(8);
+    // Give each in-flight encoder a slice of the machine rather than letting every
+    // AVIF/PNG job spin up its own full-size thread pool.
+    let encoder_threads = image_encoder_threads(cores, max_concurrent, files.len());
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let mut handles = Vec::new();
 
@@ -334,7 +350,15 @@ pub async fn compress_images_batch(
                     error: Some("Cancelled".to_string()),
                 });
             }
-            compress_image(app_clone, entry.input, entry.output, opts, channel_clone).await
+            compress_image(
+                app_clone,
+                entry.input,
+                entry.output,
+                opts,
+                encoder_threads,
+                channel_clone,
+            )
+            .await
         });
         handles.push(handle);
     }
@@ -376,9 +400,25 @@ pub async fn compress_images_batch(
     Ok(results)
 }
 
+/// Threads per encoder: when the batch is wide enough to keep every worker busy,
+/// each encoder gets `cores / workers`; a short batch lets the few jobs use more.
+fn image_encoder_threads(cores: usize, max_concurrent: usize, batch_len: usize) -> usize {
+    let in_flight = batch_len.clamp(1, max_concurrent.max(1));
+    (cores / in_flight).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoder_threads_split_cores_across_workers() {
+        assert_eq!(image_encoder_threads(8, 8, 100), 1);
+        assert_eq!(image_encoder_threads(8, 8, 2), 4);
+        assert_eq!(image_encoder_threads(16, 8, 100), 2);
+        assert_eq!(image_encoder_threads(4, 4, 1), 4);
+        assert_eq!(image_encoder_threads(2, 2, 0), 2);
+    }
 
     #[test]
     fn decode_temp_path_uses_qoi_extension() {

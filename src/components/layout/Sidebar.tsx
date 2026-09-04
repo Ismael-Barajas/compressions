@@ -4,11 +4,9 @@ import { CompressTab } from "../controls/CompressTab";
 import { ToolsTab } from "../controls/ToolsTab";
 
 export function Sidebar() {
-  const files = useCompressionStore((s) => s.files);
+  const hasVideos = useCompressionStore((s) => s.summary.video > 0);
   const activeSidebarTab = useCompressionStore((s) => s.activeSidebarTab);
   const setActiveSidebarTab = useCompressionStore((s) => s.setActiveSidebarTab);
-
-  const hasVideos = files.some((f) => f.mediaType === "video");
 
   useEffect(() => {
     if (activeSidebarTab === "tools" && !hasVideos) {

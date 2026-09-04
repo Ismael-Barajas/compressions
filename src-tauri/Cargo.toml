@@ -20,7 +20,7 @@ tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 mozjpeg = "0.10"
 oxipng = "9"
@@ -38,6 +38,8 @@ tracing-appender = "0.2"
 dirs-next = "2"
 arboard = "3"
 chrono = { version = "0.4", features = ["serde"] }
+reflink-copy = "0.1"
+walkdir = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
