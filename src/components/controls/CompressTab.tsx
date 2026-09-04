@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useCompressionStore } from "../../stores/compressionStore";
 import type { CompressTab as CompressTabId } from "../../stores/compressionStore";
 import { PresetSelector } from "./PresetSelector";
@@ -16,21 +17,21 @@ const TAB_LABELS: Record<CompressTabId, string> = {
 };
 
 export function CompressTab() {
-  const files = useCompressionStore((s) => s.files);
+  const present = useCompressionStore(
+    useShallow((s) => ({
+      video: s.summary.video > 0,
+      image: s.summary.image > 0,
+      audio: s.summary.audio > 0,
+      pdf: s.summary.pdf > 0,
+    })),
+  );
   const activeCompressTab = useCompressionStore((s) => s.activeCompressTab);
   const setActiveCompressTab = useCompressionStore((s) => s.setActiveCompressTab);
 
   const availableTabs = useMemo<CompressTabId[]>(() => {
-    const present = new Set<CompressTabId>();
-    for (const f of files) {
-      if (f.mediaType === "video") present.add("video");
-      else if (f.mediaType === "image") present.add("image");
-      else if (f.mediaType === "pdf") present.add("pdf");
-      else if (f.mediaType === "audio") present.add("audio");
-    }
     const order: CompressTabId[] = ["video", "image", "audio", "pdf"];
-    return order.filter((t) => present.has(t));
-  }, [files]);
+    return order.filter((t) => present[t]);
+  }, [present]);
 
   useEffect(() => {
     if (availableTabs.length === 0) {

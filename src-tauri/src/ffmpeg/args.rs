@@ -3,16 +3,54 @@ use crate::types::{
     VideoCodec, VideoOptions,
 };
 
+/// How often FFmpeg emits a progress block. The backend additionally throttles
+/// what reaches the UI (see `ProgressThrottle`), so this only bounds parse work.
+const PROGRESS_PERIOD: &str = "0.25";
+
+fn audio_codec_name(format: &AudioOutputFormat) -> &'static str {
+    match format {
+        AudioOutputFormat::Mp3 => "libmp3lame",
+        AudioOutputFormat::Aac => "aac",
+        AudioOutputFormat::Flac => "flac",
+        AudioOutputFormat::Opus => "libopus",
+        AudioOutputFormat::Wav => "pcm_s16le",
+    }
+}
+
+fn is_lossless(format: &AudioOutputFormat) -> bool {
+    matches!(format, AudioOutputFormat::Flac | AudioOutputFormat::Wav)
+}
+
+fn push_audio_encoding_args(args: &mut Vec<String>, opts: &AudioExtractionOptions) {
+    args.push("-c:a".into());
+    args.push(audio_codec_name(&opts.format).into());
+
+    // Bitrate (not applicable for lossless formats)
+    if !is_lossless(&opts.format) {
+        if let Some(ref bitrate) = opts.bitrate {
+            args.push("-b:a".into());
+            args.push(bitrate.clone());
+        }
+    }
+
+    if let Some(sr) = opts.sample_rate {
+        args.push("-ar".into());
+        args.push(sr.to_string());
+    }
+}
+
 pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
         input.into(),
-        // Progress output to stderr
+        // Machine-readable progress blocks on stderr; `-nostats` drops the human
+        // stats line so every block is parsed exactly once.
+        "-nostats".into(),
         "-progress".into(),
         "pipe:2".into(),
         "-stats_period".into(),
-        "0.1".into(),
+        PROGRESS_PERIOD.into(),
     ];
 
     // Video codec — use HW encoder if backend resolved one, else software
@@ -144,41 +182,16 @@ pub fn build_audio_extraction_args(
         "-y".into(),
         "-i".into(),
         input.into(),
+        "-nostats".into(),
         "-progress".into(),
         "pipe:2".into(),
         "-stats_period".into(),
-        "0.1".into(),
+        PROGRESS_PERIOD.into(),
         // Strip video stream
         "-vn".into(),
     ];
 
-    // Audio codec
-    let codec_str = match opts.format {
-        AudioOutputFormat::Mp3 => "libmp3lame",
-        AudioOutputFormat::Aac => "aac",
-        AudioOutputFormat::Flac => "flac",
-        AudioOutputFormat::Opus => "libopus",
-        AudioOutputFormat::Wav => "pcm_s16le",
-    };
-    args.push("-c:a".into());
-    args.push(codec_str.into());
-
-    // Bitrate (not applicable for lossless formats)
-    if !matches!(
-        opts.format,
-        AudioOutputFormat::Flac | AudioOutputFormat::Wav
-    ) {
-        if let Some(ref bitrate) = opts.bitrate {
-            args.push("-b:a".into());
-            args.push(bitrate.clone());
-        }
-    }
-
-    // Sample rate
-    if let Some(sr) = opts.sample_rate {
-        args.push("-ar".into());
-        args.push(sr.to_string());
-    }
+    push_audio_encoding_args(&mut args, opts);
 
     args.push(output.into());
     args
@@ -196,107 +209,60 @@ pub fn build_audio_compression_args(
         "-y".into(),
         "-i".into(),
         input.into(),
+        "-nostats".into(),
         "-progress".into(),
         "pipe:2".into(),
         "-stats_period".into(),
-        "0.1".into(),
+        PROGRESS_PERIOD.into(),
     ];
 
-    let codec_str = match opts.format {
-        AudioOutputFormat::Mp3 => "libmp3lame",
-        AudioOutputFormat::Aac => "aac",
-        AudioOutputFormat::Flac => "flac",
-        AudioOutputFormat::Opus => "libopus",
-        AudioOutputFormat::Wav => "pcm_s16le",
-    };
-    args.push("-c:a".into());
-    args.push(codec_str.into());
-
-    if !matches!(
-        opts.format,
-        AudioOutputFormat::Flac | AudioOutputFormat::Wav
-    ) {
-        if let Some(ref bitrate) = opts.bitrate {
-            args.push("-b:a".into());
-            args.push(bitrate.clone());
-        }
-    }
-
-    if let Some(sr) = opts.sample_rate {
-        args.push("-ar".into());
-        args.push(sr.to_string());
-    }
+    push_audio_encoding_args(&mut args, opts);
 
     args.push(output.into());
     args
 }
 
-/// Build args for video-to-GIF palette generation pass.
-pub fn build_gif_palette_args(
-    input: &str,
-    palette_path: &str,
-    opts: &GifConversionOptions,
-) -> Vec<String> {
-    let mut filter_parts: Vec<String> = Vec::new();
-    filter_parts.push(format!("fps={}", opts.fps));
-    if let Some(w) = opts.width {
-        filter_parts.push(format!("scale={}:-1:flags=lanczos", w));
-    }
-    filter_parts.push(format!(
-        "palettegen=max_colors={}:stats_mode=diff",
-        opts.max_colors
-    ));
-
-    let filter = filter_parts.join(",");
-
-    vec![
-        "-y".into(),
-        "-i".into(),
-        input.into(),
-        "-vf".into(),
-        filter,
-        palette_path.into(),
-    ]
-}
-
-/// Build args for video-to-GIF encoding pass using a pre-generated palette.
-pub fn build_gif_encode_args(
-    input: &str,
-    palette_path: &str,
-    output: &str,
-    opts: &GifConversionOptions,
-) -> Vec<String> {
-    let dither_str = match opts.dither {
+fn gif_dither_arg(dither: &DitherMode) -> &'static str {
+    match dither {
         DitherMode::Bayer => "dither=bayer:bayer_scale=3",
         DitherMode::FloydSteinberg => "dither=floyd_steinberg",
         DitherMode::None => "dither=none",
-    };
-
-    let mut filter_parts: Vec<String> = Vec::new();
-    filter_parts.push(format!("fps={}", opts.fps));
-    if let Some(w) = opts.width {
-        filter_parts.push(format!("scale={}:-1:flags=lanczos", w));
     }
+}
 
-    let filter_prefix = filter_parts.join(",");
+fn gif_prefilter(opts: &GifConversionOptions) -> String {
+    let mut parts = vec![format!("fps={}", opts.fps)];
+    if let Some(w) = opts.width {
+        parts.push(format!("scale={}:-1:flags=lanczos", w));
+    }
+    parts.join(",")
+}
 
+/// Build args for a single-pass video-to-GIF conversion. The decoded, scaled
+/// stream is split so `palettegen` and `paletteuse` share one decode: the source
+/// is read once instead of twice and no temporary palette file is written.
+pub fn build_gif_single_pass_args(
+    input: &str,
+    output: &str,
+    opts: &GifConversionOptions,
+) -> Vec<String> {
     let filtergraph = format!(
-        "[0:v]{filter}[x];[x][1:v]paletteuse={dither}",
-        filter = filter_prefix,
-        dither = dither_str,
+        "[0:v]{pre},split[a][b];[a]palettegen=max_colors={colors}:stats_mode=diff[p];[b][p]paletteuse={dither}",
+        pre = gif_prefilter(opts),
+        colors = opts.max_colors,
+        dither = gif_dither_arg(&opts.dither),
     );
 
     vec![
         "-y".into(),
         "-i".into(),
         input.into(),
-        "-i".into(),
-        palette_path.into(),
+        "-nostats".into(),
         "-progress".into(),
         "pipe:2".into(),
         "-stats_period".into(),
-        "0.1".into(),
-        "-lavfi".into(),
+        PROGRESS_PERIOD.into(),
+        "-filter_complex".into(),
         filtergraph,
         output.into(),
     ]
@@ -429,36 +395,29 @@ mod tests {
     }
 
     #[test]
-    fn gif_palette_args() {
+    fn gif_single_pass_reads_input_once() {
         let opts = GifConversionOptions {
-            fps: 15,
-            width: Some(320),
-            max_colors: 256,
+            fps: 12,
+            width: Some(480),
+            max_colors: 128,
             dither: DitherMode::Bayer,
         };
-        let args = build_gif_palette_args("in.mp4", "palette.png", &opts);
-        let vf = args.iter().find(|a| a.contains("fps=")).unwrap();
-        assert!(vf.contains("fps=15"));
-        assert!(vf.contains("scale=320"));
-        assert!(vf.contains("palettegen"));
+        let args = build_gif_single_pass_args("in.mp4", "out.gif", &opts);
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1);
+        let fc_idx = args.iter().position(|a| a == "-filter_complex").unwrap();
+        let graph = &args[fc_idx + 1];
+        assert!(graph.contains("fps=12,scale=480:-1:flags=lanczos,split[a][b]"));
+        assert!(graph.contains("[a]palettegen=max_colors=128:stats_mode=diff[p]"));
+        assert!(graph.contains("[b][p]paletteuse=dither=bayer:bayer_scale=3"));
+        assert!(args.contains(&"-progress".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("out.gif"));
     }
 
     #[test]
-    fn gif_encode_dither_modes() {
-        let mut opts = GifConversionOptions {
-            fps: 10,
-            width: None,
-            max_colors: 128,
-            dither: DitherMode::FloydSteinberg,
-        };
-        let args = build_gif_encode_args("in.mp4", "palette.png", "out.gif", &opts);
-        let lavfi = args.iter().find(|a| a.contains("paletteuse")).unwrap();
-        assert!(lavfi.contains("dither=floyd_steinberg"));
-
-        opts.dither = DitherMode::None;
-        let args = build_gif_encode_args("in.mp4", "palette.png", "out.gif", &opts);
-        let lavfi = args.iter().find(|a| a.contains("paletteuse")).unwrap();
-        assert!(lavfi.contains("dither=none"));
+    fn progress_args_disable_stats_line() {
+        let args = build_video_args("in.mp4", "out.mp4", &default_video_opts());
+        assert!(args.contains(&"-nostats".to_string()));
+        assert!(args.contains(&"-progress".to_string()));
     }
 
     #[test]

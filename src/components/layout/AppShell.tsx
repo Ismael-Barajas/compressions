@@ -1,8 +1,8 @@
 import { useEffect, useCallback, useRef, useState } from "react";
-import { useCompressionStore } from "../../stores/compressionStore";
+import { useCompressionStore, type FileProbeInfo } from "../../stores/compressionStore";
 import { probeFilesBatch, scanPaths } from "../../lib/commands";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
-import type { Resolution } from "../../types/compression";
+import { loadSupportedMedia } from "../../lib/mediaTypes";
 import { useClipboardPaste } from "../../hooks/useClipboardPaste";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { DropZone } from "../dropzone/DropZone";
@@ -13,12 +13,26 @@ import { BatchProgressBar } from "../output/BatchProgressBar";
 import { HistoryPanel } from "../history/HistoryPanel";
 import { LogViewer } from "../logs/LogViewer";
 
+/** Flush probe results to the store at most this often (leading + trailing). */
+const PROBE_FLUSH_INTERVAL_MS = 150;
+/** ...or as soon as this many results are buffered. */
+const PROBE_FLUSH_BATCH = 64;
+
 export function AppShell() {
-  const files = useCompressionStore((s) => s.files);
+  const hasFiles = useCompressionStore((s) => s.summary.total > 0);
+  const allComplete = useCompressionStore(
+    (s) => s.summary.total > 0 && s.summary.complete + s.summary.error === s.summary.total,
+  );
+  const filesRevision = useCompressionStore((s) => s.filesRevision);
   const addFiles = useCompressionStore((s) => s.addFiles);
   const updateFileProbes = useCompressionStore((s) => s.updateFileProbes);
   const [isDragOver, setIsDragOver] = useState(false);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
+
+  // Pull the supported-extension list from the backend once at startup.
+  useEffect(() => {
+    loadSupportedMedia();
+  }, []);
 
   const processFilePaths = useCallback(
     async (paths: string[]) => {
@@ -75,11 +89,29 @@ export function AppShell() {
 
   // Track which files have already been sent for probing to avoid re-probing
   const probedPathsRef = useRef(new Set<string>());
-  const probeBufferRef = useRef<Array<{ id: string; info: { size: number; resolution?: Resolution | null; duration?: number | null } }>>([]);
+  const probeBufferRef = useRef<Array<{ id: string; info: FileProbeInfo }>>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFlushRef = useRef(0);
 
-  // Probe newly added files — batched with concurrency control
+  const flushProbes = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    lastFlushRef.current = Date.now();
+    if (probeBufferRef.current.length > 0) {
+      const batch = probeBufferRef.current;
+      probeBufferRef.current = [];
+      updateFileProbes(batch);
+    }
+  }, [updateFileProbes]);
+
+  // Probe newly added files — batched with concurrency control.
+  // Keyed on `filesRevision` (add/remove/clear) rather than the files array so
+  // progress ticks do not re-run the O(n) scan.
   useEffect(() => {
+    const files = useCompressionStore.getState().files;
+
     // Reset probe tracking when all files are cleared so re-adding works
     if (files.length === 0) {
       probedPathsRef.current.clear();
@@ -118,27 +150,32 @@ export function AppShell() {
         },
       });
 
-      // Debounce: flush buffer to store every 150ms
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = setTimeout(() => {
-        if (probeBufferRef.current.length > 0) {
-          updateFileProbes([...probeBufferRef.current]);
-          probeBufferRef.current = [];
-        }
-      }, 150);
-    }).catch(() => {
-      // Non-fatal — files are still compressible without size info
-    });
-
-    return () => {
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = null;
+      // Throttle (not debounce): a steady stream of results still reaches the
+      // store every PROBE_FLUSH_INTERVAL_MS instead of only when the stream ends.
+      const elapsed = Date.now() - lastFlushRef.current;
+      if (
+        probeBufferRef.current.length >= PROBE_FLUSH_BATCH ||
+        elapsed >= PROBE_FLUSH_INTERVAL_MS
+      ) {
+        flushProbes();
+      } else if (!flushTimerRef.current) {
+        flushTimerRef.current = setTimeout(flushProbes, PROBE_FLUSH_INTERVAL_MS - elapsed);
       }
-    };
-  }, [files, updateFileProbes]);
-  const hasFiles = files.length > 0;
-  const allComplete = hasFiles && files.every((f) => f.status === "complete" || f.status === "error");
+    })
+      .then(flushProbes)
+      .catch(() => {
+        // Non-fatal — files are still compressible without size info
+        flushProbes();
+      });
+  }, [filesRevision, flushProbes]);
+
+  // Never leave a pending flush behind on unmount.
+  useEffect(
+    () => () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    },
+    [],
+  );
 
   return (
     <>

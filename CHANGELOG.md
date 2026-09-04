@@ -2,6 +2,36 @@
 
 All notable changes to Compressions are documented here.
 
+## [Unreleased]
+
+### Performance
+
+- **Parallel audio and PDF batches**: audio encoders and Ghostscript are single-threaded, so batches now run several files at once instead of one at a time (video and GIF stay sequential; those encoders already use every core)
+- **No redundant probing**: the duration probed when a file is added is passed to the encoder, so ffprobe is no longer spawned again before every video, audio, and GIF job
+- **Progress without the flood**: FFmpeg progress is parsed as proper `-progress` blocks (speed and ETA are now populated) and only forwarded to the UI when the bar moves visibly; the store updates a single file per event and components subscribe to summary counters instead of rescanning the whole queue
+- **History writes coalesced**: history lives in memory and is flushed in the background (temp file + rename) instead of re-reading, re-parsing, and rewriting the whole file after every completed job
+- **Keep-original is instant** on filesystems that support reflinks (APFS, Btrfs, XFS, ReFS); large copies no longer block the async runtime
+- **UI never freezes on folder scans** or log reads: those commands run on blocking threads; scanning uses `walkdir`, does not follow symlinks, and skips hidden directories
+- **HW encoders are verified** with a one-frame encode at startup, and an encoder that fails at runtime is disabled for the session, so machines without a usable GPU no longer pay for a failed NVENC spawn per video
+- **GIF conversion in one pass**: `split` + `palettegen`/`paletteuse` reads the source once and needs no temporary palette file
+- **Faster native image pipeline**: PNG pixels go straight to oxipng (no intermediate encode/decode) in their native color type; AVIF encodes from zero-copy buffers and uses the RGB path for opaque images; JPEG avoids an extra pixel copy; resizing uses SIMD convolution (`fast_image_resize`); encoder threads are budgeted across concurrent image jobs; animated GIFs are re-quantized frame by frame with 0.5 dithering
+- **Thumbnails** regenerate as you scroll (visible range, not just item count) and are keyed by file size/mtime so edited files refresh
+- **Log viewer and history** render only the visible rows; logs are read newest-first and retained for 7 days
+- **Fonts are bundled** instead of fetched from Google Fonts at launch
+- Dev builds compile dependencies optimized so `tauri dev` image encoding is usable
+
+### Bug Fixes
+
+- The file list's **Add** dialog now accepts audio files (extension lists come from one backend source)
+- Grayscale images can be encoded to WebP and AVIF
+- Files in one batch share the same `{date}`/`{time}` template stamp
+- The update indicator in the header reflects the automatic startup check
+- Batch-level failures that happen before a job starts are surfaced on the affected files instead of leaving them queued
+
+### Removed
+
+- Unused custom-preset backend (never reachable from the UI) and the unused single-file IPC commands
+
 ## [1.1.2] — 2026-07-02
 
 ### Performance

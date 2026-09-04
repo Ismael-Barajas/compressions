@@ -1,4 +1,5 @@
 import { useEffect, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { X, Trash2, Search, CheckCircle, XCircle } from "lucide-react";
 import { useHistoryStore } from "../../stores/historyStore";
 import { formatFileSize, getSavingsPercent } from "../../lib/fileUtils";
@@ -23,6 +24,9 @@ function getFileName(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
 
+/** Row height (px) including the 4px gap between rows. */
+const HISTORY_ROW_HEIGHT = 58;
+
 export function HistoryPanel() {
   const isOpen = useHistoryStore((s) => s.isOpen);
   const close = useHistoryStore((s) => s.close);
@@ -32,6 +36,7 @@ export function HistoryPanel() {
   const clearHistory = useHistoryStore((s) => s.clearHistory);
   const isLoading = useHistoryStore((s) => s.isLoading);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -52,6 +57,15 @@ export function HistoryPanel() {
     );
     return [...list].reverse();
   }, [entries, searchQuery]);
+
+  // Up to 1000 entries: render only the visible window.
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => HISTORY_ROW_HEIGHT,
+    overscan: 8,
+    enabled: isOpen,
+  });
 
   if (!isOpen) return null;
 
@@ -127,7 +141,7 @@ export function HistoryPanel() {
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-4 py-2">
+        <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-2">
           {isLoading ? (
             <div className="py-8 text-center text-xs" style={{ color: "var(--text-muted)" }}>
               Loading...
@@ -137,8 +151,9 @@ export function HistoryPanel() {
               {searchQuery ? "No matching entries" : "No compression history yet"}
             </div>
           ) : (
-            <div className="space-y-1">
-              {filtered.map((entry) => {
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+              {virtualizer.getVirtualItems().map((row) => {
+                const entry = filtered[row.index];
                 const savings = entry.success
                   ? getSavingsPercent(entry.inputSize, entry.outputSize)
                   : 0;
@@ -147,6 +162,12 @@ export function HistoryPanel() {
                     key={entry.id}
                     className="flex items-center gap-3 px-3 py-2 transition-colors"
                     style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: HISTORY_ROW_HEIGHT - 4,
+                      transform: `translateY(${row.start}px)`,
                       backgroundColor: "var(--bg-secondary)",
                       borderLeft: `2px solid ${entry.success ? "var(--success)" : "var(--error)"}`,
                     }}

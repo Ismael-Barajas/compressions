@@ -1,232 +1,91 @@
-use std::sync::Mutex;
-use std::time::Instant;
+use tauri::{ipc::Channel, AppHandle};
 
-use tauri::{ipc::Channel, AppHandle, State};
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
-use uuid::Uuid;
-
-use crate::compression::progress::parse_progress_line;
-use crate::ffmpeg::args::{build_gif_encode_args, build_gif_palette_args};
-use crate::ffmpeg::probe::probe_video_duration;
-use crate::history::storage as history;
-use crate::state::AppState;
-use crate::types::{
-    BatchEntry, CompressionResult, GifConversionOptions, HistoryEntry, ProgressEvent,
-    ProgressPayload,
+use crate::commands::job::{
+    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started, SidecarSpec,
 };
-use crate::utils::OutputClaim;
+use crate::ffmpeg::args::build_gif_single_pass_args;
+use crate::types::{BatchEntry, CompressionResult, GifConversionOptions, ProgressEvent};
 use crate::validate::validate_gif_options;
+
+pub async fn convert_video_to_gif_inner(
+    app: &AppHandle,
+    input: String,
+    output: String,
+    options: GifConversionOptions,
+    duration_hint: Option<f64>,
+    on_progress: &Channel<ProgressEvent>,
+) -> Result<CompressionResult, String> {
+    validate_gif_options(&options)?;
+    tracing::info!(input = %input, output = %output, "Starting GIF conversion");
+
+    let ctx = prepare_job(&input, &output, "gif").await?;
+    let total_duration = resolve_duration(app, &input, duration_hint).await;
+
+    // Single pass: palettegen and paletteuse share one decode via `split`, so the
+    // source is read once and no temporary palette file is needed.
+    let args = build_gif_single_pass_args(&ctx.input, &ctx.output, &options);
+
+    send_started(&ctx, on_progress);
+
+    let outcome = run_sidecar(
+        app,
+        &ctx,
+        SidecarSpec {
+            sidecar: "ffmpeg",
+            args: &args,
+            progress: Some((total_duration, on_progress)),
+            capture_stderr: false,
+        },
+    )
+    .await?;
+
+    let error = (outcome.exit_code != Some(0))
+        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    Ok(finish_job(
+        app,
+        &ctx,
+        outcome.exit_code,
+        outcome.duration_ms,
+        error,
+        on_progress,
+    )
+    .await)
+}
 
 #[tauri::command]
 pub async fn convert_video_to_gif(
     app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
     input: String,
     output: String,
     options: GifConversionOptions,
+    duration: Option<f64>,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
-    validate_gif_options(&options)?;
-    let job_id = Uuid::new_v4().to_string();
-    tracing::info!(input = %input, output = %output, "Starting GIF conversion");
-    let file_name = std::path::Path::new(&input)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-
-    // Ensure the output directory exists
-    if let Some(parent) = std::path::Path::new(&output).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create output directory: {}", e))?;
-    }
-
-    // Atomic claim with auto-cleanup on early return (e.g. palette pass failure).
-    let _output_claim = OutputClaim::claim(&output);
-    let output = _output_claim.path().to_string();
-
-    let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
-
-    // --- Pass 1: Generate palette ---
-    let palette_path = {
-        let temp_dir = std::env::temp_dir();
-        let palette_name = format!("palette_{}.png", Uuid::new_v4());
-        temp_dir.join(palette_name).to_string_lossy().to_string()
-    };
-
-    let palette_args = build_gif_palette_args(&input, &palette_path, &options);
-
-    let (mut rx, palette_child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(&palette_args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg (palette pass): {}", e))?;
-
-    // Store palette pass child for cancellation
-    {
-        let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state
-            .active_jobs
-            .insert(job_id.clone(), (palette_child, output.clone()));
-    }
-
-    // Wait for palette pass to complete
-    let mut palette_ok = false;
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(status) = event {
-            palette_ok = status.code == Some(0);
-            break;
-        }
-    }
-
-    // Remove palette pass from active jobs
-    if let Ok(mut app_state) = state.lock() {
-        app_state.active_jobs.remove(&job_id);
-    }
-
-    if !palette_ok {
-        let _ = std::fs::remove_file(&palette_path);
-        return Err("FFmpeg palette generation failed".to_string());
-    }
-
-    // --- Pass 2: Encode GIF using palette ---
-    let encode_args = build_gif_encode_args(&input, &palette_path, &output, &options);
-
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(&encode_args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg (encode pass): {}", e))?;
-
-    // Store child handle for cancellation
-    {
-        let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state
-            .active_jobs
-            .insert(job_id.clone(), (child, output.clone()));
-    }
-
-    let _ = on_progress.send(ProgressEvent::Started {
-        job_id: job_id.clone(),
-        file_name: file_name.clone(),
-        input_path: input.clone(),
-    });
-
-    let start = Instant::now();
-    let mut last_progress = ProgressPayload {
-        job_id: job_id.clone(),
-        file_name: file_name.clone(),
-        percent: 0.0,
-        current_frame: None,
-        total_frames: None,
-        speed: None,
-        eta_seconds: None,
-    };
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                if let Some(progress) = parse_progress_line(&line, total_duration) {
-                    last_progress.percent = progress.percent;
-                    last_progress.speed = progress.speed.clone();
-                    last_progress.eta_seconds = progress.eta_seconds;
-                    let _ = on_progress.send(ProgressEvent::Progress(last_progress.clone()));
-                }
-            }
-            CommandEvent::Terminated(status) => {
-                // Clean up palette temp file
-                let _ = std::fs::remove_file(&palette_path);
-
-                if let Ok(mut app_state) = state.lock() {
-                    app_state.active_jobs.remove(&job_id);
-                }
-
-                let duration_ms = start.elapsed().as_millis() as u64;
-                let output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
-
-                let success = status.code == Some(0);
-                let result = CompressionResult {
-                    job_id: job_id.clone(),
-                    input_path: input.clone(),
-                    output_path: output.clone(),
-                    input_size,
-                    output_size,
-                    duration_ms,
-                    success,
-                    error: if success {
-                        None
-                    } else {
-                        Some(format!("FFmpeg exited with code {:?}", status.code))
-                    },
-                };
-
-                let cancelled = crate::commands::queue::is_cancelled(&app);
-                if success {
-                    let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
-                } else {
-                    if let Err(e) = std::fs::remove_file(&output) {
-                        tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
-                    }
-                    if !cancelled {
-                        let _ = on_progress.send(ProgressEvent::Error {
-                            job_id: job_id.clone(),
-                            message: result.error.clone().unwrap_or_default(),
-                        });
-                    }
-                }
-
-                if result.success {
-                    tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "GIF conversion completed");
-                } else if cancelled {
-                    tracing::info!(input = %result.input_path, "GIF conversion cancelled by user");
-                } else {
-                    tracing::warn!(input = %result.input_path, error = ?result.error, "GIF conversion failed");
-                }
-                if success || !cancelled {
-                    if let Err(e) =
-                        history::append_entry(&app, HistoryEntry::from_result(&result, "gif"))
-                    {
-                        tracing::warn!(error = %e, "Failed to save history entry");
-                    }
-                }
-                return Ok(result);
-            }
-            _ => {}
-        }
-    }
-
-    // Clean up palette on unexpected exit
-    let _ = std::fs::remove_file(&palette_path);
-    Err("FFmpeg process ended unexpectedly".to_string())
+    convert_video_to_gif_inner(&app, input, output, options, duration, &on_progress).await
 }
 
+/// GIF conversion decodes and filters the full video; sequential like video encoding.
 #[tauri::command]
 pub async fn convert_videos_to_gif_batch(
     app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
     files: Vec<BatchEntry>,
     options: GifConversionOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let mut results = Vec::new();
-    for entry in files {
-        let result = convert_video_to_gif(
-            app.clone(),
-            state.clone(),
-            entry.input,
-            entry.output,
-            options.clone(),
-            on_progress.clone(),
-        )
-        .await?;
-        results.push(result);
-    }
-    Ok(results)
+    Ok(run_batch(&app, files, 1, move |app, entry| {
+        let options = options.clone();
+        let on_progress = on_progress.clone();
+        async move {
+            convert_video_to_gif_inner(
+                &app,
+                entry.input,
+                entry.output,
+                options,
+                entry.duration,
+                &on_progress,
+            )
+            .await
+        }
+    })
+    .await)
 }
