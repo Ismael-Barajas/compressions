@@ -19,12 +19,12 @@
     "version:check": "node scripts/check-versions.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
     "@tanstack/react-virtual": "^3.13.23",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-fs": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "lucide-react": "^0.468",
     "react": "^19.0.0",

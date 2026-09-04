@@ -21,13 +21,14 @@ A cross-platform desktop app for compressing videos, images, audio, and PDFs. Bu
 - **Quality** — 1–100 per format
 - **Resize** — Fit or Exact mode, lock/unlock aspect ratio, width presets
 - **Metadata** — Strip or preserve EXIF data
-- **Parallel processing** — Up to 8 concurrent encode tasks
+- **Parallel processing** — Up to 8 concurrent encode tasks, with encoder threads budgeted across the batch
 - **Input formats** — JPG, PNG, WebP, AVIF, BMP, TIFF, GIF, HEIC, HEIF
 
 ### PDF Compression
 
 - **Presets** — Screen (72 DPI), Ebook (150 DPI), Printer (300 DPI), Prepress (300 DPI)
 - **DPI override** — 72, 150, 200, or 300
+- **Parallel batches** — A few PDFs are processed concurrently
 - Powered by Ghostscript
 
 ### Audio Compression
@@ -36,6 +37,7 @@ A cross-platform desktop app for compressing videos, images, audio, and PDFs. Bu
 - **Bitrate** — Presets (64k–320k) or custom input (lossy formats)
 - **Sample rate** — Original, 48000, 44100, or 22050 Hz
 - **Original format** — Keeps source format with new encoding settings; niche formats (WMA, APE, DTS, etc.) fall back to MP3
+- **Parallel batches** — Several audio files encode at once (the encoders are single-threaded)
 - **Audio wave progress** — Animated waveform equalizer during compression
 - **Input formats** — MP3, AAC, M4A, FLAC, WAV, OGG, Opus, WMA, AIFF, APE, ALAC, AC3, DTS, PCM, AMR
 
@@ -48,14 +50,13 @@ A cross-platform desktop app for compressing videos, images, audio, and PDFs. Bu
 
 ### Video-to-GIF Conversion
 
-- Two-pass palette-based encoding for optimal color quality
+- Palette-based encoding (palettegen + paletteuse) in a single FFmpeg pass
 - **Controls** — FPS (5–30), max width, color count (16–256), dither mode (Floyd-Steinberg, Bayer, None)
 
 ### Presets
 
 - **Built-in video presets** — Web Optimized, High Quality, Small File Size, Social Media
 - **Built-in image presets** — Web Optimized, High Quality, Small File Size, Thumbnail
-- Save and delete custom presets
 
 ### Workflow
 

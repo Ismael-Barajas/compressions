@@ -22,6 +22,12 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  build: {
+    // Tauri v2 webview floor: WebView2 (Chromium) on Windows, WebKit on macOS 10.15+/Linux.
+    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+    minify: "esbuild",
+    sourcemap: !!process.env.TAURI_ENV_DEBUG,
+  },
   server: {
     port: 1420,
     strictPort: true,

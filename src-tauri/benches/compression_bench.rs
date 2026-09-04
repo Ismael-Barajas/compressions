@@ -1,12 +1,33 @@
 use compressions_lib::compression::image::compress;
-use compressions_lib::compression::progress::parse_progress_line;
+use compressions_lib::compression::progress::ProgressParser;
 use compressions_lib::types::{ImageFormat, ImageOptions, ResizeMode};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn bench_parse_progress(c: &mut Criterion) {
-    let line = "frame=  120 fps=30 time=00:00:04.00 speed=1.5x";
-    c.bench_function("parse_progress_line", |b| {
-        b.iter(|| parse_progress_line(black_box(line), black_box(10.0)))
+    let block = [
+        "frame=120",
+        "fps=30.00",
+        "bitrate=1500.0kbits/s",
+        "total_size=750000",
+        "out_time_us=4000000",
+        "out_time_ms=4000000",
+        "out_time=00:00:04.000000",
+        "dup_frames=0",
+        "drop_frames=0",
+        "speed=1.5x",
+        "progress=continue",
+    ];
+    c.bench_function("progress_parser_block", |b| {
+        b.iter(|| {
+            let mut parser = ProgressParser::new(black_box(10.0));
+            let mut out = None;
+            for line in block {
+                if let Some(p) = parser.feed_line(black_box(line)) {
+                    out = Some(p);
+                }
+            }
+            out
+        })
     });
 }
 
@@ -130,6 +151,23 @@ fn bench_avif_speed_comparison(c: &mut Criterion) {
         });
     }
     group.finish();
+
+    // Thread budget per encoder, as used when several image jobs run concurrently.
+    let mut group = c.benchmark_group("avif_threads");
+    for threads in [1usize, 2, 4] {
+        group.bench_with_input(BenchmarkId::new("threads", threads), &threads, |b, &t| {
+            b.iter(|| {
+                let img_ref = ravif::Img::new(&pixels[..], width as usize, height as usize);
+                ravif::Encoder::new()
+                    .with_quality(80.0)
+                    .with_speed(6)
+                    .with_num_threads(Some(black_box(t)))
+                    .encode_rgba(img_ref)
+                    .unwrap()
+            })
+        });
+    }
+    group.finish();
 }
 
 fn create_test_gif(path: &std::path::Path, width: u16, height: u16, frames: usize) {
@@ -200,9 +238,34 @@ fn bench_jpeg_scaling(c: &mut Criterion) {
     }
 }
 
+fn bench_jpeg_resize(c: &mut Criterion) {
+    use compressions_lib::types::Resolution;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input_4k.png");
+    create_test_image(&input, 3840, 2160);
+    let output = dir.path().join("out.jpg");
+    let mut options = opts(ImageFormat::Jpeg, 80);
+    options.resize = Some(Resolution {
+        width: 1280,
+        height: 0,
+    });
+
+    c.bench_function("jpeg_q80_resize_4k_to_1280", |b| {
+        b.iter(|| {
+            compress(
+                input.to_str().unwrap(),
+                output.to_str().unwrap(),
+                &options,
+            )
+            .unwrap()
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_parse_progress,
+    bench_jpeg_resize,
     bench_jpeg_1080p,
     bench_png_1080p,
     bench_webp_1080p,

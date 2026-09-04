@@ -16,20 +16,20 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 mozjpeg = "0.10"
-oxipng = "9"
+oxipng = { version = "9", default-features = false, features = ["parallel"] }
 webp = "0.3"
 ravif = "0.11"
 rgb = "0.8"
 gif = "0.13"
 imagequant = "4"
 img-parts = "0.4"
+fast_image_resize = { version = "5", features = ["image"] }
 thiserror = "2"
 regex = "1"
 tracing = "0.1"
@@ -52,6 +52,15 @@ tempfile = "3"
 [[bench]]
 name = "compression_bench"
 harness = false
+
+# Encoders (mozjpeg, ravif, oxipng, imagequant, resizing) are 20-50x slower
+# unoptimized, which makes `tauri dev` painful. Optimize dependencies even in dev;
+# the app crate itself stays quick to compile.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
 
 [profile.release]
 panic = "abort"

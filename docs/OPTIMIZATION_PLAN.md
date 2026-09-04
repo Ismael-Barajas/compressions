@@ -1,6 +1,6 @@
 # Compressions — Performance & Efficiency Optimization Plan
 
-Status: **planning only, no code changes yet.**
+Status: **implemented on `claude/app-optimization-plan-xhv7ln`** (all four phases; see CHANGELOG "Unreleased"). Kept as the rationale record for the changes.
 Scope: full pass over the frontend (`src/`), the Rust backend (`src-tauri/`), build config, and CI as of v1.1.2.
 
 Each item lists what happens today, why it costs something, the proposed change, expected payoff,
