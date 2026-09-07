@@ -19,19 +19,80 @@ const HW_ENCODERS: &[&str] = &[
     "hevc_nvenc",
 ];
 
-/// Run `ffmpeg -encoders` and return the set of available HW encoders.
+/// Timeout for the one-frame verification encode per HW encoder.
+const HW_VERIFY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Return the set of HW encoders that are both compiled into FFmpeg *and* work on
+/// this machine. `ffmpeg -encoders` lists e.g. `h264_nvenc` on every build even
+/// without an NVIDIA GPU; trusting it meant every video first spent a failed
+/// spawn on the HW path before falling back. A one-frame `nullsrc` encode into
+/// `-f null` catches that at startup instead.
 pub async fn detect_hw_encoders(app: &AppHandle) -> HashSet<String> {
-    let result = detect_hw_encoders_inner(app).await;
-    match result {
-        Ok(encoders) => {
-            tracing::info!(?encoders, "Detected HW encoders");
-            encoders
-        }
+    let listed = match detect_hw_encoders_inner(app).await {
+        Ok(encoders) => encoders,
         Err(e) => {
             tracing::warn!(error = %e, "Failed to detect HW encoders, using software only");
-            HashSet::new()
+            return HashSet::new();
+        }
+    };
+
+    let mut working = HashSet::new();
+    for name in listed {
+        match verify_hw_encoder(app, &name).await {
+            Ok(true) => {
+                working.insert(name);
+            }
+            Ok(false) => {
+                tracing::info!(encoder = %name, "HW encoder listed but not usable; skipping")
+            }
+            Err(e) => tracing::warn!(encoder = %name, error = %e, "HW encoder verification failed"),
         }
     }
+    tracing::info!(encoders = ?working, "Usable HW encoders");
+    working
+}
+
+async fn verify_hw_encoder(app: &AppHandle, encoder: &str) -> Result<bool, String> {
+    let args = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "nullsrc=s=256x256:r=30:d=0.1",
+        "-frames:v",
+        "1",
+        "-c:v",
+        encoder,
+        "-f",
+        "null",
+        "-",
+    ];
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
+
+    let mut code = None;
+    let waited = timeout(HW_VERIFY_TIMEOUT, async {
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Terminated(status) = event {
+                code = status.code;
+                break;
+            }
+        }
+    })
+    .await;
+
+    if waited.is_err() {
+        let _ = child.kill();
+        return Err("verification encode timed out".to_string());
+    }
+    Ok(code == Some(0))
 }
 
 async fn detect_hw_encoders_inner(app: &AppHandle) -> Result<HashSet<String>, String> {
@@ -66,7 +127,6 @@ async fn detect_hw_encoders_inner(app: &AppHandle) -> Result<HashSet<String>, St
 pub struct VideoInfo {
     pub duration: Option<f64>,
     pub resolution: Option<Resolution>,
-    pub codec_name: Option<String>,
 }
 
 pub async fn probe_video_duration(app: &AppHandle, path: &str) -> Result<f64, String> {
@@ -139,13 +199,8 @@ pub async fn probe_video_info(app: &AppHandle, path: &str) -> Result<VideoInfo, 
         })
     });
 
-    let codec_name = video_stream
-        .and_then(|s| s["codec_name"].as_str())
-        .map(|s| s.to_string());
-
     Ok(VideoInfo {
         duration,
         resolution,
-        codec_name,
     })
 }

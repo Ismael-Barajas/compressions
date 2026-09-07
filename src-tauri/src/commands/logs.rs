@@ -9,12 +9,17 @@ pub fn get_log_path(app: AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Reads log files on a blocking thread so the main thread stays responsive.
 #[tauri::command]
-pub fn read_logs(app: AppHandle, max_lines: Option<usize>) -> Result<Vec<LogEntry>, String> {
-    setup::read_log_entries(&app, max_lines)
+pub async fn read_logs(app: AppHandle, max_lines: Option<usize>) -> Result<Vec<LogEntry>, String> {
+    tokio::task::spawn_blocking(move || setup::read_log_entries(&app, max_lines))
+        .await
+        .map_err(|e| format!("Log read task failed: {}", e))?
 }
 
 #[tauri::command]
-pub fn clear_logs(app: AppHandle) -> Result<(), String> {
-    setup::clear_logs(&app)
+pub async fn clear_logs(app: AppHandle) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || setup::clear_logs(&app))
+        .await
+        .map_err(|e| format!("Log clear task failed: {}", e))?
 }

@@ -5,11 +5,9 @@ import { AudioControls } from "./AudioControls";
 import { GifControls } from "./GifControls";
 
 export function ToolsTab() {
-  const files = useCompressionStore((s) => s.files);
+  const hasQueuedVideos = useCompressionStore((s) => s.summary.queuedVideos > 0);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
   const { extractAudioFromAll, convertAllToGif } = useCompression();
-
-  const hasQueuedVideos = files.some((f) => f.mediaType === "video" && f.status === "queued");
 
   return (
     <div className="flex flex-col gap-5">

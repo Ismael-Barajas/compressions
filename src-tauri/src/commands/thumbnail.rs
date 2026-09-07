@@ -10,28 +10,33 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tokio::time::timeout;
 
+use crate::media::{extension_of, VIDEO_EXTENSIONS};
 use crate::state::ThumbnailSemaphore;
 
 const THUMB_SIZE: u32 = 160;
 const FFMPEG_THUMB_TIMEOUT: Duration = Duration::from_secs(10);
 
-const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts",
-];
-
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "gif"];
+/// Formats the `image` crate decodes directly. AVIF/HEIC go through FFmpeg.
+const NATIVE_IMAGE_EXTENSIONS: &[&str] =
+    &["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "gif"];
 
 fn get_extension(path: &str) -> String {
-    Path::new(path)
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default()
+    extension_of(Path::new(path))
 }
 
-/// Stable hash of a file path to use as the thumbnail filename.
+/// Cache key for a file: its path plus size and mtime, so an edited file gets a
+/// fresh thumbnail instead of the stale cached one.
 fn path_hash(path: &str) -> String {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
+    if let Ok(meta) = std::fs::metadata(path) {
+        meta.len().hash(&mut hasher);
+        if let Ok(modified) = meta.modified() {
+            if let Ok(d) = modified.duration_since(std::time::UNIX_EPOCH) {
+                d.as_secs().hash(&mut hasher);
+            }
+        }
+    }
     format!("{:016x}", hasher.finish())
 }
 
@@ -208,7 +213,7 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
     let ext = get_extension(path);
 
     // PDF or unsupported — no thumbnail
-    if !IMAGE_EXTENSIONS.contains(&ext.as_str())
+    if !NATIVE_IMAGE_EXTENSIONS.contains(&ext.as_str())
         && ext != "avif"
         && ext != "heic"
         && ext != "heif"
@@ -231,7 +236,7 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
         ));
     }
 
-    let result = if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+    let result = if NATIVE_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         thumbnail_image(path.to_string(), out_path.clone()).await
     } else if ext == "heic" || ext == "heif" {
         // HEIC uses tile grids internally — FFmpeg assembles them via a complex
@@ -259,21 +264,6 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
             Ok(None)
         }
     }
-}
-
-#[tauri::command]
-pub async fn generate_thumbnail(
-    app: AppHandle,
-    state: tauri::State<'_, ThumbnailSemaphore>,
-    path: String,
-) -> Result<Option<String>, String> {
-    let _permit = state
-        .0
-        .acquire()
-        .await
-        .map_err(|e| format!("Semaphore error: {e}"))?;
-
-    generate_one(&app, &path).await
 }
 
 #[tauri::command]

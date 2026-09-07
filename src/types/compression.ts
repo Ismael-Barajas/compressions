@@ -87,14 +87,12 @@ export interface CompressionResult {
   error: string | null;
 }
 
-export interface FileInfo {
-  path: string;
-  fileName: string;
-  size: number;
-  mediaType: MediaType;
-  duration: number | null;
-  resolution: Resolution | null;
-  codecName: string | null;
+/** Extension lists as reported by the backend (single source of truth). */
+export interface SupportedMedia {
+  video: string[];
+  image: string[];
+  audio: string[];
+  pdf: string[];
 }
 
 export interface ProbeEvent {

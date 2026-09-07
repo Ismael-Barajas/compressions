@@ -1,7 +1,15 @@
 name: Tests
 
 on:
-  workflow_dispatch: # disabled — re-enable workflow_call to re-activate
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: "Also run the Rust benchmarks"
+        type: boolean
+        default: false
 
 env:
   CARGO_INCREMENTAL: 0
@@ -190,6 +198,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   rust-benchmarks:
+    # Benchmarks are slow and noisy on shared runners: manual only.
+    if: github.event_name == 'workflow_dispatch' && inputs.benchmarks
     needs: [rust-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30

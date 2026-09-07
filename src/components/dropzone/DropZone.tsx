@@ -2,6 +2,7 @@ import { Upload, FolderOpen } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { scanPaths } from "../../lib/commands";
+import { dialogFilters } from "../../lib/mediaTypes";
 
 async function addResolvedPaths(paths: string[]) {
   const resolvedPaths = await scanPaths(paths);
@@ -28,36 +29,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
   const handleBrowse = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        multiple: true,
-        filters: [
-          {
-            name: "Media Files",
-            extensions: [
-              "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v",
-              "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif", "heic", "heif",
-              "mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts", "pcm", "amr",
-              "pdf",
-            ],
-          },
-          {
-            name: "Video Files",
-            extensions: ["mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v"],
-          },
-          {
-            name: "Image Files",
-            extensions: ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif", "heic", "heif"],
-          },
-          {
-            name: "Audio Files",
-            extensions: ["mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff", "ape", "alac", "ac3", "dts", "pcm", "amr"],
-          },
-          {
-            name: "PDF Files",
-            extensions: ["pdf"],
-          },
-        ],
-      });
+      const selected = await open({ multiple: true, filters: dialogFilters() });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
         addResolvedPaths(paths);

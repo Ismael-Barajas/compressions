@@ -5,6 +5,7 @@ import { useCompressionStore } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
 import { scanPaths, generateThumbnailsBatch } from "../../lib/commands";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
+import { dialogFilters } from "../../lib/mediaTypes";
 import { FileItem } from "./FileItem";
 
 function addResolvedPaths(paths: string[]) {
@@ -20,6 +21,8 @@ const THUMB_ROW_HEIGHT = 96;
 
 export function FileList() {
   const files = useCompressionStore((s) => s.files);
+  const fileCount = useCompressionStore((s) => s.summary.total);
+  const hasQueued = useCompressionStore((s) => s.summary.queued > 0);
   const clearFiles = useCompressionStore((s) => s.clearFiles);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
   const isPaused = useCompressionStore((s) => s.isPaused);
@@ -53,7 +56,7 @@ export function FileList() {
     if (!currentShow || currentFiles.length === 0) return;
 
     const visibleItems = virtualizer.getVirtualItems();
-    const needThumbnails: { id: string; path: string }[] = [];
+    const needThumbnails = new Map<string, string>(); // path -> id
 
     for (const item of visibleItems) {
       const file = currentFiles[item.index];
@@ -64,48 +67,44 @@ export function FileList() {
         !failedRef.current.has(file.id) &&
         file.mediaType !== "pdf"
       ) {
-        needThumbnails.push({ id: file.id, path: file.path });
+        needThumbnails.set(file.path, file.id);
         inFlightRef.current.add(file.id);
       }
     }
 
-    if (needThumbnails.length === 0) return;
+    if (needThumbnails.size === 0) return;
 
-    const paths = needThumbnails.map((f) => f.path);
-    generateThumbnailsBatch(paths)
+    generateThumbnailsBatch([...needThumbnails.keys()])
       .then((results) => {
         for (const [path, thumbPath] of results) {
-          const match = needThumbnails.find((f) => f.path === path);
-          if (match) {
-            inFlightRef.current.delete(match.id);
-            if (thumbPath) {
-              setThumbnailPath(match.id, thumbPath);
-            } else {
-              failedRef.current.add(match.id);
-            }
+          const id = needThumbnails.get(path);
+          if (!id) continue;
+          inFlightRef.current.delete(id);
+          if (thumbPath) {
+            setThumbnailPath(id, thumbPath);
+          } else {
+            failedRef.current.add(id);
           }
         }
       })
       .catch(() => {
-        for (const f of needThumbnails) {
-          inFlightRef.current.delete(f.id);
+        for (const id of needThumbnails.values()) {
+          inFlightRef.current.delete(id);
         }
       });
   }, [virtualizer, setThumbnailPath]);
 
-  // Generate thumbnails when visible range changes or thumbnails toggled on
+  // Generate thumbnails when the visible *range* changes (scrolling by whole rows
+  // keeps the item count constant, so the count alone misses most scrolls),
+  // when thumbnails are toggled on, or when files are added.
+  const range = virtualizer.range;
+  const rangeStart = range?.startIndex ?? 0;
+  const rangeEnd = range?.endIndex ?? 0;
   useEffect(() => {
-    if (!showThumbnails) return;
+    if (!showThumbnails || fileCount === 0) return;
     const timer = setTimeout(generateVisibleThumbnails, 100);
     return () => clearTimeout(timer);
-  }, [showThumbnails, generateVisibleThumbnails, virtualizer.getVirtualItems().length]);
-
-  // Also generate when files are first added with thumbnails already on
-  useEffect(() => {
-    if (!showThumbnails || files.length === 0) return;
-    const timer = setTimeout(generateVisibleThumbnails, 200);
-    return () => clearTimeout(timer);
-  }, [files.length, showThumbnails, generateVisibleThumbnails]);
+  }, [showThumbnails, fileCount, rangeStart, rangeEnd, generateVisibleThumbnails]);
 
   // Clear in-flight tracking when thumbnails toggled off
   useEffect(() => {
@@ -123,19 +122,7 @@ export function FileList() {
   const handleAddMore = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        multiple: true,
-        filters: [
-          {
-            name: "Media Files",
-            extensions: [
-              "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v",
-              "jpg", "jpeg", "png", "webp", "avif", "bmp", "tiff", "gif", "heic", "heif",
-              "pdf",
-            ],
-          },
-        ],
-      });
+      const selected = await open({ multiple: true, filters: dialogFilters() });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
         const resolved = await scanPaths(paths);
@@ -167,7 +154,7 @@ export function FileList() {
         style={{ borderColor: "var(--border)" }}
       >
         <span className="font-data" style={{ color: "var(--text-muted)" }}>
-          {files.length} file{files.length !== 1 ? "s" : ""} queued
+          {fileCount} file{fileCount !== 1 ? "s" : ""} queued
         </span>
         <div className="flex gap-1.5">
           <ToolbarButton onClick={toggleThumbnails} title={showThumbnails ? "List view" : "Thumbnail view"}>
@@ -234,7 +221,7 @@ export function FileList() {
       </div>
 
       {/* Queue controls */}
-      {!isCompressing && files.some((f) => f.status === "queued") && (
+      {!isCompressing && hasQueued && (
         <div className="mt-4 flex justify-center">
           <button
             className="btn-primary flex items-center gap-2.5 px-10 py-2.5 text-[15px]"

@@ -1,21 +1,11 @@
-use std::sync::Mutex;
-use std::time::Instant;
+use tauri::{ipc::Channel, AppHandle, Manager, State};
 
-use tauri::{ipc::Channel, AppHandle, State};
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
-use uuid::Uuid;
-
-use crate::compression::progress::parse_progress_line;
-use crate::ffmpeg::args::build_video_args;
-use crate::ffmpeg::probe::probe_video_duration;
-use crate::history::storage as history;
-use crate::state::{AppState, HwEncoders};
-use crate::types::{
-    BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload, VideoCodec,
-    VideoOptions,
+use crate::commands::job::{
+    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started, SidecarSpec,
 };
-use crate::utils::OutputClaim;
+use crate::ffmpeg::args::build_video_args;
+use crate::state::{AppState, HwEncoders};
+use crate::types::{BatchEntry, CompressionResult, ProgressEvent, VideoCodec, VideoOptions};
 use crate::validate::validate_video_options;
 
 /// Resolve which HW encoder (if any) to use for the given codec.
@@ -47,249 +37,174 @@ fn resolve_hw_encoder(
     name.map(|s| s.to_string())
 }
 
-/// Spawn FFmpeg, track progress, return exit code and duration.
-async fn run_ffmpeg(
-    app: &AppHandle,
-    state: &State<'_, Mutex<AppState>>,
-    job_id: &str,
-    file_name: &str,
-    args: &[String],
-    total_duration: f64,
-    on_progress: &Channel<ProgressEvent>,
-) -> Result<(Option<i32>, u64), String> {
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
-
-    {
-        // We re-use the same job_id for the output path stored earlier
-        let output = args.last().cloned().unwrap_or_default();
-        let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state
-            .active_jobs
-            .insert(job_id.to_string(), (child, output));
-    }
-
-    let start = Instant::now();
-    let mut last_progress = ProgressPayload {
-        job_id: job_id.to_string(),
-        file_name: file_name.to_string(),
-        percent: 0.0,
-        current_frame: None,
-        total_frames: None,
-        speed: None,
-        eta_seconds: None,
-    };
-
-    let mut exit_code = None;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                if let Some(progress) = parse_progress_line(&line, total_duration) {
-                    last_progress.percent = progress.percent;
-                    last_progress.current_frame = progress.current_frame;
-                    last_progress.speed = progress.speed.clone();
-                    last_progress.eta_seconds = progress.eta_seconds;
-                    let _ = on_progress.send(ProgressEvent::Progress(last_progress.clone()));
-                }
-            }
-            CommandEvent::Terminated(status) => {
-                if let Ok(mut app_state) = state.lock() {
-                    app_state.active_jobs.remove(job_id);
-                }
-                exit_code = status.code;
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    let duration_ms = start.elapsed().as_millis() as u64;
-    Ok((exit_code, duration_ms))
+fn pick_hw_encoder(app: &AppHandle, codec: &VideoCodec) -> Option<String> {
+    let hw = app.try_state::<HwEncoders>()?;
+    let encoders = hw.0.read().ok()?;
+    resolve_hw_encoder(codec, &encoders)
 }
 
-#[tauri::command]
-pub async fn compress_video(
-    app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
-    hw_state: State<'_, HwEncoders>,
+/// A HW encoder that failed at runtime is dropped from the detected set so the
+/// remaining files in the batch go straight to software instead of paying for a
+/// failed spawn each.
+fn disable_hw_encoder(app: &AppHandle, name: &str) {
+    if let Some(hw) = app.try_state::<HwEncoders>() {
+        if let Ok(mut set) = hw.0.write() {
+            if set.remove(name) {
+                tracing::warn!(encoder = %name, "HW encoder failed at runtime; disabled for this session");
+            }
+        }
+    }
+}
+
+pub async fn compress_video_inner(
+    app: &AppHandle,
     input: String,
     output: String,
     options: VideoOptions,
-    on_progress: Channel<ProgressEvent>,
+    duration_hint: Option<f64>,
+    on_progress: &Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     validate_video_options(&options)?;
-    let job_id = Uuid::new_v4().to_string();
     tracing::info!(input = %input, output = %output, "Starting video compression");
-    let file_name = std::path::Path::new(&input)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+    let ctx = prepare_job(&input, &output, "video").await?;
+    let total_duration = resolve_duration(app, &input, duration_hint).await;
+    let hw_encoder = pick_hw_encoder(app, &options.codec);
 
-    // Ensure the output directory exists (needed for subfolder export mode)
-    if let Some(parent) = std::path::Path::new(&output).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create output directory: {}", e))?;
-    }
+    send_started(&ctx, on_progress);
 
-    // Atomically claim the path. Held for the rest of the function — its Drop
-    // cleans up the 0-byte marker if any early return fires before FFmpeg writes.
-    let _output_claim = OutputClaim::claim(&output);
-    let output = _output_claim.path().to_string();
-
-    let total_duration = probe_video_duration(&app, &input).await.unwrap_or(0.0);
-
-    // Resolve HW encoder if available (read-only, no mutex contention)
-    let hw_encoder = {
-        let encoders = hw_state.0.read().map_err(|e| e.to_string())?;
-        resolve_hw_encoder(&options.codec, &encoders)
-    };
-
-    let _ = on_progress.send(ProgressEvent::Started {
-        job_id: job_id.clone(),
-        file_name: file_name.clone(),
-        input_path: input.clone(),
-    });
-
-    // Try HW encoder first, fall back to software on failure
     let mut opts = options.clone();
-    let mut used_hw = false;
     if let Some(ref hw) = hw_encoder {
         opts.hw_encoder = Some(hw.clone());
-        used_hw = true;
         tracing::info!(encoder = %hw, "Trying HW encoder");
     }
 
-    let args = build_video_args(&input, &output, &opts);
-    let (exit_code, duration_ms) = run_ffmpeg(
-        &app,
-        &state,
-        &job_id,
-        &file_name,
-        &args,
-        total_duration,
-        &on_progress,
+    let args = build_video_args(&ctx.input, &ctx.output, &opts);
+    let mut outcome = run_sidecar(
+        app,
+        &ctx,
+        SidecarSpec {
+            sidecar: "ffmpeg",
+            args: &args,
+            progress: Some((total_duration, on_progress)),
+            capture_stderr: false,
+        },
     )
     .await?;
 
-    // HW encoder failed — retry with software
-    let (exit_code, duration_ms) = if exit_code != Some(0) && used_hw {
+    // HW encoder failed — retry with software (unless the user cancelled).
+    if outcome.exit_code != Some(0)
+        && hw_encoder.is_some()
+        && !crate::commands::queue::is_cancelled(app)
+    {
+        if let Some(ref hw) = hw_encoder {
+            disable_hw_encoder(app, hw);
+        }
         tracing::warn!("HW encoder failed, falling back to software");
-        if let Err(e) = std::fs::remove_file(&output) {
-            tracing::warn!(path = %output, error = %e, "Failed to remove partial HW output");
+        if let Err(e) = tokio::fs::remove_file(&ctx.output).await {
+            tracing::warn!(path = %ctx.output, error = %e, "Failed to remove partial HW output");
         }
         opts.hw_encoder = None;
-        let sw_args = build_video_args(&input, &output, &opts);
-        run_ffmpeg(
-            &app,
-            &state,
-            &job_id,
-            &file_name,
-            &sw_args,
-            total_duration,
-            &on_progress,
+        let sw_args = build_video_args(&ctx.input, &ctx.output, &opts);
+        outcome = run_sidecar(
+            app,
+            &ctx,
+            SidecarSpec {
+                sidecar: "ffmpeg",
+                args: &sw_args,
+                progress: Some((total_duration, on_progress)),
+                capture_stderr: false,
+            },
         )
-        .await?
-    } else {
-        (exit_code, duration_ms)
-    };
-
-    let mut output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
-    let success = exit_code == Some(0);
-
-    // If compressed file is no smaller than the original, keep the original
-    if success && output_size >= input_size && input_size > 0 {
-        if let Err(e) = std::fs::copy(&input, &output) {
-            tracing::warn!(path = %output, error = %e, "Failed to copy original over bloated video output");
-        } else {
-            output_size = input_size;
-        }
+        .await?;
     }
 
-    let result = CompressionResult {
-        job_id: job_id.clone(),
-        input_path: input.clone(),
-        output_path: output.clone(),
-        input_size,
-        output_size,
-        duration_ms,
-        success,
-        error: if success {
-            None
-        } else {
-            Some(format!("FFmpeg exited with code {:?}", exit_code))
-        },
-    };
-
-    if success {
-        let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
-        tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "Video compression completed");
-    } else {
-        if let Err(e) = std::fs::remove_file(&output) {
-            tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
-        }
-        // Suppress error event and history when this failure is from Cancel All.
-        // The frontend has already reset the file to queued; emitting an error
-        // would re-mark it as failed and pollute history with N cancellation rows.
-        if !crate::commands::queue::is_cancelled(&app) {
-            let _ = on_progress.send(ProgressEvent::Error {
-                job_id: job_id.clone(),
-                message: result.error.clone().unwrap_or_default(),
-            });
-            tracing::warn!(input = %result.input_path, error = ?result.error, "Video compression failed");
-        } else {
-            tracing::info!(input = %result.input_path, "Video compression cancelled by user");
-        }
-    }
-    if success || !crate::commands::queue::is_cancelled(&app) {
-        if let Err(e) = history::append_entry(&app, HistoryEntry::from_result(&result, "video")) {
-            tracing::warn!(error = %e, "Failed to save history entry");
-        }
-    }
-    Ok(result)
+    let error = (outcome.exit_code != Some(0))
+        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    Ok(finish_job(
+        app,
+        &ctx,
+        outcome.exit_code,
+        outcome.duration_ms,
+        error,
+        on_progress,
+    )
+    .await)
 }
 
+/// Video encoding is sequential on purpose: libx264/x265/SVT-AV1 already saturate
+/// every core, so a second concurrent encode only adds contention.
 #[tauri::command]
 pub async fn compress_videos_batch(
     app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
-    hw_state: State<'_, HwEncoders>,
     files: Vec<BatchEntry>,
     options: VideoOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let mut results = Vec::new();
-    for entry in files {
-        let result = compress_video(
-            app.clone(),
-            state.clone(),
-            hw_state.clone(),
-            entry.input,
-            entry.output,
-            options.clone(),
-            on_progress.clone(),
-        )
-        .await?;
-        results.push(result);
-    }
-    Ok(results)
+    Ok(run_batch(&app, files, 1, move |app, entry| {
+        let options = options.clone();
+        let on_progress = on_progress.clone();
+        async move {
+            compress_video_inner(
+                &app,
+                entry.input,
+                entry.output,
+                options,
+                entry.duration,
+                &on_progress,
+            )
+            .await
+        }
+    })
+    .await)
 }
 
 #[tauri::command]
-pub fn cancel_compression(state: State<'_, Mutex<AppState>>, job_id: String) -> Result<(), String> {
+pub fn cancel_compression(
+    state: State<'_, std::sync::Mutex<AppState>>,
+    job_id: String,
+) -> Result<(), String> {
     let mut app_state = state.lock().map_err(|e| e.to_string())?;
     if let Some((child, _)) = app_state.active_jobs.remove(&job_id) {
         child
             .kill()
-            .map_err(|e| format!("Failed to kill FFmpeg process: {}", e))?;
-        // Partial file cleanup happens in the Terminated event handler once the process exits
+            .map_err(|e| format!("Failed to kill process: {}", e))?;
+        // Partial file cleanup happens in the job runner once the process exits
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn set(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn prefers_videotoolbox_over_nvenc() {
+        let hw = set(&["h264_videotoolbox", "h264_nvenc"]);
+        assert_eq!(
+            resolve_hw_encoder(&VideoCodec::H264, &hw).as_deref(),
+            Some("h264_videotoolbox")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_nvenc() {
+        let hw = set(&["hevc_nvenc"]);
+        assert_eq!(
+            resolve_hw_encoder(&VideoCodec::H265, &hw).as_deref(),
+            Some("hevc_nvenc")
+        );
+        assert_eq!(resolve_hw_encoder(&VideoCodec::H264, &hw), None);
+    }
+
+    #[test]
+    fn av1_never_uses_hw() {
+        let hw = set(&["h264_nvenc", "hevc_nvenc", "h264_videotoolbox"]);
+        assert_eq!(resolve_hw_encoder(&VideoCodec::AV1, &hw), None);
+    }
 }

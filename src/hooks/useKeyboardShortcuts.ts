@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useCompressionStore } from "../stores/compressionStore";
-import { useCompression } from "./useCompression";
+import { startCompression, cancelProcessingFiles } from "../lib/compressionController";
 
 /**
  * Global keyboard shortcuts:
@@ -8,8 +8,6 @@ import { useCompression } from "./useCompression";
  * - Escape: cancel all processing files
  */
 export function useKeyboardShortcuts() {
-  const { startCompression, cancelFile } = useCompression();
-
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       // Don't intercept shortcuts when typing in inputs
@@ -23,24 +21,19 @@ export function useKeyboardShortcuts() {
       }
 
       if (e.code === "Space") {
-        const { files, isCompressing } = useCompressionStore.getState();
-        const hasQueued = files.some((f) => f.status === "queued");
-        if (hasQueued && !isCompressing) {
+        const { summary, isCompressing } = useCompressionStore.getState();
+        if (summary.queued > 0 && !isCompressing) {
           e.preventDefault();
           startCompression();
         }
       }
 
       if (e.code === "Escape") {
-        const { files } = useCompressionStore.getState();
-        const processing = files.filter((f) => f.status === "processing");
-        for (const file of processing) {
-          cancelFile(file.id);
-        }
+        cancelProcessingFiles();
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [startCompression, cancelFile]);
+  }, []);
 }

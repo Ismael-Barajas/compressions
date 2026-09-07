@@ -1,4 +1,5 @@
 import { useEffect, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { X, Trash2, Search, RefreshCw } from "lucide-react";
 import { useLogStore } from "../../stores/logStore";
 import type { LogLevel } from "../../types/compression";
@@ -12,6 +13,9 @@ const LEVEL_COLORS: Record<string, string> = {
 };
 
 const LEVELS: Array<LogLevel | "ALL"> = ["ALL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
+
+/** Estimated row height; rows are measured after mount so wrapped messages fit. */
+const LOG_ROW_ESTIMATE = 26;
 
 function formatTimestamp(raw: string): string {
   const d = new Date(raw);
@@ -46,12 +50,6 @@ export function LogViewer() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [isOpen, close]);
 
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
-  }, [entries]);
-
   const filtered = useMemo(() => {
     const q = searchQuery.toLowerCase();
     return entries.filter((e) => {
@@ -62,6 +60,23 @@ export function LogViewer() {
       return true;
     });
   }, [entries, searchQuery, filterLevel]);
+
+  // Up to 2000 entries: render only the visible window instead of every row.
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => LOG_ROW_ESTIMATE,
+    overscan: 10,
+    enabled: isOpen,
+  });
+
+  // Newest entries are at the bottom; jump there when a fresh load arrives.
+  useEffect(() => {
+    if (isOpen && filtered.length > 0) {
+      virtualizer.scrollToIndex(filtered.length - 1, { align: "end" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, isOpen]);
 
   if (!isOpen) return null;
 
@@ -171,32 +186,45 @@ export function LogViewer() {
               {searchQuery || filterLevel !== "ALL" ? "No matching log entries" : "No logs yet"}
             </div>
           ) : (
-            <div className="space-y-px">
-              {filtered.map((entry, i) => (
-                <div
-                  key={i}
-                  className="flex gap-2 px-2 py-1"
-                  style={{ backgroundColor: "var(--bg-secondary)" }}
-                >
-                  <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
-                    {formatTimestamp(entry.timestamp)}
-                  </span>
-                  <span
-                    className="font-semibold"
-                    style={{ color: LEVEL_COLORS[entry.level] ?? "var(--text-primary)", flexShrink: 0, width: "3rem" }}
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+              {virtualizer.getVirtualItems().map((row) => {
+                const entry = filtered[row.index];
+                return (
+                  <div
+                    key={row.key}
+                    data-index={row.index}
+                    ref={virtualizer.measureElement}
+                    className="flex gap-2 px-2 py-1"
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${row.start}px)`,
+                      backgroundColor: "var(--bg-secondary)",
+                      borderBottom: "1px solid var(--bg-primary)",
+                    }}
                   >
-                    {entry.level}
-                  </span>
-                  {entry.target && (
                     <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
-                      {entry.target}
+                      {formatTimestamp(entry.timestamp)}
                     </span>
-                  )}
-                  <span style={{ color: "var(--text-primary)", wordBreak: "break-all" }}>
-                    {entry.message}
-                  </span>
-                </div>
-              ))}
+                    <span
+                      className="font-semibold"
+                      style={{ color: LEVEL_COLORS[entry.level] ?? "var(--text-primary)", flexShrink: 0, width: "3rem" }}
+                    >
+                      {entry.level}
+                    </span>
+                    {entry.target && (
+                      <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
+                        {entry.target}
+                      </span>
+                    )}
+                    <span style={{ color: "var(--text-primary)", wordBreak: "break-all" }}>
+                      {entry.message}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

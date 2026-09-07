@@ -5,7 +5,13 @@ use tauri::Manager;
 /// Read file paths from the system clipboard (e.g. files copied in Finder/Explorer).
 /// Returns an empty vec if clipboard doesn't contain file paths.
 #[tauri::command]
-pub fn read_clipboard_files() -> Result<Vec<String>, String> {
+pub async fn read_clipboard_files() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(read_clipboard_files_sync)
+        .await
+        .map_err(|e| format!("Clipboard task failed: {}", e))?
+}
+
+fn read_clipboard_files_sync() -> Result<Vec<String>, String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
     // arboard doesn't have a direct "get files" API on all platforms,
@@ -41,7 +47,13 @@ pub fn read_clipboard_files() -> Result<Vec<String>, String> {
 /// Save clipboard image data to a temporary PNG file.
 /// Returns the path to the saved file, or an error if no image is available.
 #[tauri::command]
-pub fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || save_clipboard_image_sync(&app))
+        .await
+        .map_err(|e| format!("Clipboard task failed: {}", e))?
+}
+
+fn save_clipboard_image_sync(app: &tauri::AppHandle) -> Result<String, String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
     let image = clipboard

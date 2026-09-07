@@ -1,19 +1,17 @@
 use std::path::Path;
-use std::sync::Mutex;
-use std::time::Instant;
 
-use tauri::{ipc::Channel, AppHandle, Manager, State};
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
-use uuid::Uuid;
+use tauri::{ipc::Channel, AppHandle, Manager};
 
-use crate::history::storage as history;
-use crate::state::AppState;
-use crate::types::{
-    BatchEntry, CompressionResult, HistoryEntry, PdfOptions, PdfQuality, ProgressEvent,
+use crate::commands::job::{
+    finish_job, prepare_job, run_batch, run_sidecar, send_started,
+    single_threaded_batch_concurrency, SidecarSpec,
 };
-use crate::utils::OutputClaim;
+use crate::types::{BatchEntry, CompressionResult, PdfOptions, PdfQuality, ProgressEvent};
 use crate::validate::validate_pdf_options;
+
+/// Ghostscript's pdfwrite device is single-threaded but memory-hungry, so a batch
+/// runs a few files at once rather than one per core.
+const PDF_BATCH_CONCURRENCY_CAP: usize = 3;
 
 /// Resolve the path to the bundled Ghostscript resource directory.
 /// In dev mode, it's at `src-tauri/binaries/gs-res/`.
@@ -84,150 +82,70 @@ fn build_gs_args(
     args
 }
 
-#[tauri::command]
-pub async fn compress_pdf(
-    app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
+pub async fn compress_pdf_inner(
+    app: &AppHandle,
     input: String,
     output: String,
     options: PdfOptions,
-    on_progress: Channel<ProgressEvent>,
+    on_progress: &Channel<ProgressEvent>,
 ) -> Result<CompressionResult, String> {
     validate_pdf_options(&options)?;
-    let job_id = Uuid::new_v4().to_string();
     tracing::info!(input = %input, quality = ?options.quality, "Starting PDF compression");
-    let file_name = std::path::Path::new(&input)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
 
-    let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+    let ctx = prepare_job(&input, &output, "pdf").await?;
+    let gs_res_dir = resolve_gs_resource_dir(app);
+    let args = build_gs_args(&ctx.input, &ctx.output, &options, gs_res_dir.as_deref());
 
-    if let Some(parent) = std::path::Path::new(&output).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create output directory: {}", e))?;
-    }
+    send_started(&ctx, on_progress);
 
-    // Atomic claim with auto-cleanup on early return (e.g. Ghostscript spawn failure).
-    let _output_claim = OutputClaim::claim(&output);
-    let output = _output_claim.path().to_string();
+    let outcome = run_sidecar(
+        app,
+        &ctx,
+        SidecarSpec {
+            sidecar: "gs",
+            args: &args,
+            progress: None,
+            capture_stderr: true,
+        },
+    )
+    .await?;
 
-    let gs_res_dir = resolve_gs_resource_dir(&app);
-    let args = build_gs_args(&input, &output, &options, gs_res_dir.as_deref());
-
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("gs")
-        .map_err(|e| format!("Failed to create Ghostscript sidecar: {}", e))?
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn Ghostscript: {}", e))?;
-
-    // Store child handle for cancellation
-    {
-        let mut app_state = state.lock().map_err(|e| e.to_string())?;
-        app_state
-            .active_jobs
-            .insert(job_id.clone(), (child, output.clone()));
-    }
-
-    let _ = on_progress.send(ProgressEvent::Started {
-        job_id: job_id.clone(),
-        file_name: file_name.clone(),
-        input_path: input.clone(),
-    });
-
-    let start = Instant::now();
-    let mut stderr_output = String::new();
-    const STDERR_CAP: usize = 4096;
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(bytes) => {
-                if stderr_output.len() < STDERR_CAP {
-                    let chunk = String::from_utf8_lossy(&bytes);
-                    let remaining = STDERR_CAP - stderr_output.len();
-                    if chunk.len() <= remaining {
-                        stderr_output.push_str(&chunk);
-                    } else {
-                        stderr_output.push_str(&chunk[..remaining]);
-                        stderr_output.push_str("... [truncated]");
-                    }
-                }
-            }
-            CommandEvent::Terminated(status) => {
-                if let Ok(mut app_state) = state.lock() {
-                    app_state.active_jobs.remove(&job_id);
-                }
-
-                let duration_ms = start.elapsed().as_millis() as u64;
-                let mut output_size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
-                let success = status.code == Some(0);
-
-                // If Ghostscript produced a larger file, keep the original
-                if success && output_size >= input_size && input_size > 0 {
-                    if let Err(e) = std::fs::copy(&input, &output) {
-                        tracing::warn!(path = %output, error = %e, "Failed to copy original over bloated PDF output");
-                    } else {
-                        output_size = input_size;
-                    }
-                }
-
-                let result = CompressionResult {
-                    job_id: job_id.clone(),
-                    input_path: input.clone(),
-                    output_path: output.clone(),
-                    input_size,
-                    output_size,
-                    duration_ms,
-                    success,
-                    error: if success {
-                        None
-                    } else {
-                        Some(if stderr_output.is_empty() {
-                            format!("Ghostscript exited with code {:?}", status.code)
-                        } else {
-                            stderr_output.trim().to_string()
-                        })
-                    },
-                };
-
-                let cancelled = crate::commands::queue::is_cancelled(&app);
-                if success {
-                    let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
-                } else {
-                    if let Err(e) = std::fs::remove_file(&output) {
-                        tracing::warn!(path = %output, error = %e, "Failed to remove failed output");
-                    }
-                    if !cancelled {
-                        let _ = on_progress.send(ProgressEvent::Error {
-                            job_id: job_id.clone(),
-                            message: result.error.clone().unwrap_or_default(),
-                        });
-                    }
-                }
-
-                if result.success {
-                    tracing::info!(input = %result.input_path, output_size = result.output_size, duration_ms = result.duration_ms, "PDF compression completed");
-                } else if cancelled {
-                    tracing::info!(input = %result.input_path, "PDF compression cancelled by user");
-                } else {
-                    tracing::warn!(input = %result.input_path, error = ?result.error, "PDF compression failed");
-                }
-                if success || !cancelled {
-                    if let Err(e) =
-                        history::append_entry(&app, HistoryEntry::from_result(&result, "pdf"))
-                    {
-                        tracing::warn!(error = %e, "Failed to save history entry");
-                    }
-                }
-                return Ok(result);
-            }
-            _ => {}
+    let error = (outcome.exit_code != Some(0)).then(|| {
+        if outcome.stderr.trim().is_empty() {
+            format!("Ghostscript exited with code {:?}", outcome.exit_code)
+        } else {
+            outcome.stderr.trim().to_string()
         }
-    }
+    });
+    Ok(finish_job(
+        app,
+        &ctx,
+        outcome.exit_code,
+        outcome.duration_ms,
+        error,
+        on_progress,
+    )
+    .await)
+}
 
-    Err("Ghostscript process ended unexpectedly".to_string())
+#[tauri::command]
+pub async fn compress_pdfs_batch(
+    app: AppHandle,
+    files: Vec<BatchEntry>,
+    options: PdfOptions,
+    on_progress: Channel<ProgressEvent>,
+) -> Result<Vec<CompressionResult>, String> {
+    let concurrency = single_threaded_batch_concurrency(PDF_BATCH_CONCURRENCY_CAP);
+    Ok(
+        run_batch(&app, files, concurrency, move |app, entry| {
+            let options = options.clone();
+            let on_progress = on_progress.clone();
+            async move {
+                compress_pdf_inner(&app, entry.input, entry.output, options, &on_progress).await
+            }
+        })
+        .await,
+    )
 }
 
 #[cfg(test)]
@@ -299,28 +217,4 @@ mod tests {
         let args = build_gs_args("in.pdf", "out.pdf", &opts(PdfQuality::Ebook, None), None);
         assert!(!args.iter().any(|a| a.starts_with("-I")));
     }
-}
-
-#[tauri::command]
-pub async fn compress_pdfs_batch(
-    app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
-    files: Vec<BatchEntry>,
-    options: PdfOptions,
-    on_progress: Channel<ProgressEvent>,
-) -> Result<Vec<CompressionResult>, String> {
-    let mut results = Vec::new();
-    for entry in files {
-        let result = compress_pdf(
-            app.clone(),
-            state.clone(),
-            entry.input,
-            entry.output,
-            options.clone(),
-            on_progress.clone(),
-        )
-        .await?;
-        results.push(result);
-    }
-    Ok(results)
 }

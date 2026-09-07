@@ -1,15 +1,17 @@
+import { useShallow } from "zustand/react/shallow";
 import { useCompressionStore } from "../../stores/compressionStore";
 
 export function BatchProgressBar() {
-  const files = useCompressionStore((s) => s.files);
+  // Subscribe to three numbers instead of the whole files array: this component
+  // re-renders on every progress tick, so the derivation must be O(1).
+  const { totalFiles, completedCount, processingProgress } = useCompressionStore(
+    useShallow((s) => ({
+      totalFiles: s.summary.total,
+      completedCount: s.summary.complete + s.summary.error,
+      processingProgress: s.summary.progressSum,
+    })),
+  );
 
-  const totalFiles = files.length;
-  const completedCount = files.filter(
-    (f) => f.status === "complete" || f.status === "error",
-  ).length;
-  const processingProgress = files
-    .filter((f) => f.status === "processing")
-    .reduce((sum, f) => sum + f.progress, 0);
   const totalProgress =
     totalFiles > 0 ? (completedCount * 100 + processingProgress) / totalFiles : 0;
 
