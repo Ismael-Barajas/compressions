@@ -2,7 +2,7 @@
 
 All notable changes to Compressions are documented here.
 
-## [Unreleased]
+## [1.2.0] — 2026-09-07
 
 ### Performance
 
