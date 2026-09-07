@@ -139,6 +139,18 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Release notes come from the CHANGELOG.md section for this version, so the
+      # GitHub release lists what changed instead of a fixed placeholder line.
+      - name: Read release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            node scripts/release-notes.mjs
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,7 +159,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "Compressions v__VERSION__"
-          releaseBody: "See the assets to download and install."
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
