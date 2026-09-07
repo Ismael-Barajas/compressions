@@ -4,6 +4,10 @@ All notable changes to Compressions are documented here.
 
 ## [1.2.0] — 2026-09-07
 
+### New App Icon
+
+- New mark across every platform icon, the favicon, and the in-app header: a chevron bearing down on a slab, pressing it thinner. Same gold-on-black palette as before, now on a rounded tile so it sits naturally in the macOS Dock and Windows taskbar
+
 ### Performance
 
 - **Parallel audio and PDF batches**: audio encoders and Ghostscript are single-threaded, so batches now run several files at once instead of one at a time (video and GIF stay sequential; those encoders already use every core)

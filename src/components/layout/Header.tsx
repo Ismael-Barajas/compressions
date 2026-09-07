@@ -6,11 +6,18 @@ import { useLogStore } from "../../stores/logStore";
 import { useUpdateCheck } from "../../hooks/useUpdateCheck";
 
 function CompressionMark() {
+  // Same mark as the app icon: a chevron pressing a slab thinner.
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <rect x="1" y="1" width="16" height="4" fill="var(--accent)" />
-      <rect x="3" y="7" width="12" height="4" fill="var(--accent)" opacity="0.65" />
-      <rect x="5" y="13" width="8" height="4" fill="var(--accent)" opacity="0.35" />
+    <svg width="18" height="18" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+      <polyline
+        points="14,14 50,48 86,14"
+        stroke="var(--accent)"
+        strokeWidth="15"
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+      />
+      <rect x="14" y="64" width="72" height="11" fill="var(--accent)" />
+      <rect x="26" y="83" width="48" height="7" fill="var(--accent)" opacity="0.65" />
     </svg>
   );
 }
