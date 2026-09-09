@@ -1,14 +1,10 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/main/nicegui/elements/lib/tauri/schema/capability.json",
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:allow-spawn",
-    "shell:allow-kill",
-    "dialog:allow-open",
-    "dialog:allow-save",
     "dialog:default",
     "updater:default",
     "process:allow-restart"

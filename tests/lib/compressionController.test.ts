@@ -228,6 +228,24 @@ describe("startCompression", () => {
     error.mockRestore();
   });
 
+  it("submits one batch when startCompression is called twice before the first starts", async () => {
+    store().addFiles([makeFile()]);
+    // Hold the pre-flight resetCancel so the second call lands in the await window.
+    let releaseReset: () => void = () => {};
+    commands.resetCancel.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releaseReset = resolve; }),
+    );
+
+    const first = controller.startCompression();
+    const second = controller.startCompression();
+    releaseReset();
+    await Promise.all([first, second]);
+
+    expect(commands.compressVideosBatch).toHaveBeenCalledTimes(1);
+    expect(store().files[0].status).toBe("complete");
+    expect(store().isCompressing).toBe(false);
+  });
+
   it("honors Cancel All: leaves files queued and does not mark them failed", async () => {
     const a = makeFile();
     store().addFiles([a]);
@@ -277,6 +295,31 @@ describe("tools", () => {
     const entries: BatchEntry[] = commands.convertVideosToGifBatch.mock.calls[0][0];
     expect(entries.map((e) => e.input)).toEqual([v1.path]);
     expect(entries[0].output).toBe("/in/f1_compressed.gif".replace("f1", v1.name.replace(".mp4", "")));
+  });
+
+  it("extractAudioFromAll resets the backend cancel flag before starting", async () => {
+    store().addFiles([makeFile()]);
+    commands.extractAudioBatch.mockImplementation(backendThatCompletes());
+
+    await controller.extractAudioFromAll();
+
+    expect(commands.resetCancel).toHaveBeenCalledTimes(1);
+    expect(commands.extractAudioBatch).toHaveBeenCalledTimes(1);
+    expect(store().files[0].status).toBe("complete");
+  });
+
+  it("cancelFile leaves a job that completed during the cancel round-trip complete", async () => {
+    const a = makeFile({ status: "processing", jobId: "ja" });
+    useCompressionStore.setState({ files: [a], summary: deriveSummary([a]) });
+    commands.cancelCompression.mockImplementationOnce(async () => {
+      // Backend finished the job before the cancel arrived.
+      store().markComplete("ja", okResult({ input: a.path, output: "/out/a.mp4" }, "ja"));
+    });
+
+    await controller.cancelFile(a.id);
+
+    expect(store().files[0].status).toBe("complete");
+    expect(store().files[0].error).toBeUndefined();
   });
 
   it("cancelProcessingFiles cancels every processing job in parallel", async () => {

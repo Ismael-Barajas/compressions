@@ -277,6 +277,13 @@ function summaryAfterTransition(
   return s;
 }
 
+/** Dedup key for a path. Windows paths (drive letter or backslashes) are
+ * case-insensitive and accept either separator; the stored path is untouched. */
+function pathKey(path: string): string {
+  const isWindowsPath = /^[a-zA-Z]:/.test(path) || path.includes("\\");
+  return isWindowsPath ? path.replace(/\\/g, "/").toLowerCase() : path;
+}
+
 const RESET_FOR_QUEUE = {
   status: "queued" as const,
   progress: 0,
@@ -311,8 +318,14 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
 
   addFiles: (newFiles) =>
     set((state) => {
-      const existingPaths = new Set(state.files.map((f) => f.path));
-      const unique = newFiles.filter((f) => !existingPaths.has(f.path));
+      const seen = new Set(state.files.map((f) => pathKey(f.path)));
+      const unique: QueuedFile[] = [];
+      for (const f of newFiles) {
+        const key = pathKey(f.path);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(f);
+      }
       if (unique.length === 0) return {};
       const files = [...state.files, ...unique];
       return { files, summary: deriveSummary(files), filesRevision: state.filesRevision + 1 };

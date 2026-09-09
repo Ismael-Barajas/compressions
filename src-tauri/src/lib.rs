@@ -9,7 +9,8 @@ pub mod types;
 mod utils;
 mod validate;
 
-use state::{AppState, CancelFlag, HwEncoders, ThumbnailSemaphore};
+use state::{AppState, CancelFlag, HwEncoders, NativeJobs, ThumbnailSemaphore};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -34,8 +35,12 @@ pub fn run() {
         .manage(Mutex::new(AppState::default()))
         .manage(HwEncoders::default())
         .manage(CancelFlag::default())
+        .manage(NativeJobs::default())
         .manage(ThumbnailSemaphore(Arc::new(tokio::sync::Semaphore::new(4))))
         .setup(|app| {
+            // Clipboard PNGs left behind by a crash or force-quit.
+            commands::clipboard::cleanup_clipboard_images(app.handle());
+
             // Set window icon explicitly so it shows in dev mode too
             if let Some(window) = app.get_webview_window("main") {
                 window
@@ -88,10 +93,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle().clone();
-                let job_count = app
+                // Sidecar children plus in-process image encodes (which have no child).
+                let sidecar_count = app
                     .try_state::<Mutex<AppState>>()
                     .and_then(|s| s.lock().ok().map(|g| g.active_jobs.len()))
                     .unwrap_or(0);
+                let native_count = app
+                    .try_state::<NativeJobs>()
+                    .map(|n| n.0.load(Ordering::SeqCst))
+                    .unwrap_or(0);
+                let job_count = sidecar_count + native_count;
                 if job_count == 0 {
                     return;
                 }
@@ -123,6 +134,7 @@ pub fn run() {
                 commands::queue::shutdown_all_jobs(app);
                 history::storage::flush_now(app);
                 commands::thumbnail::cleanup_thumbnail_cache();
+                commands::clipboard::cleanup_clipboard_images(app);
             }
         });
 }

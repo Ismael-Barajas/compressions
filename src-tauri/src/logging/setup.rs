@@ -9,6 +9,8 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 use crate::types::LogEntry;
 
 const MAX_LOG_LINES: usize = 2000;
+/// Hard ceiling for a caller-supplied `max_lines`.
+const MAX_LOG_LINES_CEILING: usize = 10_000;
 /// Daily files kept on disk. Older ones are pruned by the appender.
 const MAX_LOG_FILES: usize = 7;
 const LOG_FILE_PREFIX: &str = "compressions";
@@ -29,8 +31,30 @@ pub fn log_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(log_dir)
 }
 
+/// The newest log file on disk (the appender writes date-stamped names such as
+/// `compressions.2026-09-08.log`). Falls back to the undated name when none exist.
 pub fn log_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(log_dir(app)?.join(format!("{}.{}", LOG_FILE_PREFIX, LOG_FILE_SUFFIX)))
+    let dir = log_dir(app)?;
+    let mut files = list_log_files(&dir)?;
+    files.sort();
+    Ok(files
+        .pop()
+        .unwrap_or_else(|| dir.join(format!("{}.{}", LOG_FILE_PREFIX, LOG_FILE_SUFFIX))))
+}
+
+/// Log files in `dir`, unsorted. Date-stamped names sort chronologically.
+fn list_log_files(dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
+    Ok(fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read log dir: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(is_log_file)
+                .unwrap_or(false)
+        })
+        .collect())
 }
 
 /// Initialize tracing with dual output: stderr + rolling log file.
@@ -74,21 +98,14 @@ pub fn read_log_entries(
 ) -> Result<Vec<LogEntry>, String> {
     let dir = log_dir(app)?;
 
-    let mut log_files: Vec<PathBuf> = fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read log dir: {}", e))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(is_log_file)
-                .unwrap_or(false)
-        })
-        .collect();
+    let mut log_files = list_log_files(&dir)?;
     // Date-stamped names sort chronologically; newest last.
     log_files.sort();
 
-    let limit = max_lines.unwrap_or(MAX_LOG_LINES);
+    // The IPC argument is a hint, not a licence to load a week of logs.
+    let limit = max_lines
+        .unwrap_or(MAX_LOG_LINES)
+        .clamp(1, MAX_LOG_LINES_CEILING);
     let mut newest_first: Vec<LogEntry> = Vec::with_capacity(limit.min(4096));
 
     for path in log_files.iter().rev() {
@@ -179,18 +196,8 @@ fn parse_log_line(line: &str) -> Option<LogEntry> {
 
 /// Clear all log files.
 pub fn clear_logs(app: &AppHandle) -> Result<(), String> {
-    let dir = log_dir(app)?;
-    let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read log dir: {}", e))?;
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(is_log_file)
-            .unwrap_or(false)
-        {
-            let _ = fs::remove_file(&path);
-        }
+    for path in list_log_files(&log_dir(app)?)? {
+        let _ = fs::remove_file(&path);
     }
     Ok(())
 }
@@ -242,6 +249,26 @@ mod tests {
     #[test]
     fn garbage_returns_none() {
         assert!(parse_log_line("just some random text").is_none());
+    }
+
+    #[test]
+    fn newest_dated_log_file_sorts_last() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "compressions.2026-09-06.log",
+            "compressions.2026-09-08.log",
+            "compressions.2026-09-07.log",
+            "history.json",
+        ] {
+            std::fs::write(dir.path().join(name), b"").unwrap();
+        }
+        let mut files = list_log_files(&dir.path().to_path_buf()).unwrap();
+        files.sort();
+        assert_eq!(files.len(), 3);
+        assert!(files
+            .last()
+            .unwrap()
+            .ends_with("compressions.2026-09-08.log"));
     }
 
     #[test]

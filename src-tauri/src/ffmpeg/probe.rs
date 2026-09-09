@@ -54,6 +54,7 @@ pub async fn detect_hw_encoders(app: &AppHandle) -> HashSet<String> {
 
 async fn verify_hw_encoder(app: &AppHandle, encoder: &str) -> Result<bool, String> {
     let args = [
+        "-nostdin",
         "-hide_banner",
         "-loglevel",
         "error",
@@ -88,31 +89,39 @@ async fn verify_hw_encoder(app: &AppHandle, encoder: &str) -> Result<bool, Strin
     })
     .await;
 
+    // Harmless after a normal exit; guarantees no orphan if the channel closed early.
+    let _ = child.kill();
     if waited.is_err() {
-        let _ = child.kill();
         return Err("verification encode timed out".to_string());
     }
     Ok(code == Some(0))
 }
 
 async fn detect_hw_encoders_inner(app: &AppHandle) -> Result<HashSet<String>, String> {
-    let (mut rx, _child) = app
+    let (mut rx, child) = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(["-encoders", "-hide_banner"])
+        .args(["-nostdin", "-encoders", "-hide_banner"])
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
 
     let mut output = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                output.push_str(&String::from_utf8_lossy(&bytes));
+    let waited = timeout(HW_VERIFY_TIMEOUT, async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) => {
+                    output.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                CommandEvent::Terminated(_) => break,
+                _ => {}
             }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
         }
+    })
+    .await;
+    let _ = child.kill();
+    if waited.is_err() {
+        return Err("encoder listing timed out".to_string());
     }
 
     let mut found = HashSet::new();
@@ -146,7 +155,7 @@ pub async fn probe_video_info(app: &AppHandle, path: &str) -> Result<VideoInfo, 
         path,
     ];
 
-    let (mut rx, _child) = app
+    let (mut rx, child) = app
         .shell()
         .sidecar("ffprobe")
         .map_err(|e| format!("Failed to create ffprobe sidecar: {}", e))?
@@ -169,6 +178,8 @@ pub async fn probe_video_info(app: &AppHandle, path: &str) -> Result<VideoInfo, 
     .await;
 
     if recv_result.is_err() {
+        // A hung ffprobe must not outlive the timeout.
+        let _ = child.kill();
         return Err(format!(
             "ffprobe timed out after {}s for: {}",
             PROBE_TIMEOUT.as_secs(),

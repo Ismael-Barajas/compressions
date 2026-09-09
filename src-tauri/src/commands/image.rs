@@ -9,14 +9,15 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
-use crate::commands::job::keep_original_if_larger;
+use crate::commands::job::{keep_original_if_larger, register_job, unregister_job};
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
-use crate::state::CancelFlag;
+use crate::state::{CancelFlag, NativeJobGuard, NativeJobs};
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
 };
 use crate::utils::OutputClaim;
+use crate::validate::validate_image_options;
 
 fn is_avif_input(path: &str) -> bool {
     Path::new(path)
@@ -43,6 +44,7 @@ fn image_decode_temp_path(kind: &str) -> PathBuf {
 
 fn build_ffmpeg_image_decode_args(input: &str, output: &str) -> Vec<String> {
     vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -52,64 +54,123 @@ fn build_ffmpeg_image_decode_args(input: &str, output: &str) -> Vec<String> {
     ]
 }
 
-/// Decode an AVIF file to a temporary QOI via FFmpeg sidecar (preserves RGBA transparency).
-async fn decode_avif_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
-    let temp_path = image_decode_temp_path("avif");
-    let temp_str = temp_path.to_string_lossy().to_string();
-    let args = build_ffmpeg_image_decode_args(input, &temp_str);
-
-    let (mut rx, _child) = app
+/// Spawn an FFmpeg helper for this job, registered under `job_id` so Cancel All and
+/// the close prompt see it, and wait for it to exit. Returns the exit code.
+async fn run_ffmpeg_helper(
+    app: &AppHandle,
+    job_id: &str,
+    output: &str,
+    args: &[String],
+    what: &str,
+) -> Result<Option<i32>, String> {
+    if crate::commands::queue::is_cancelled(app) {
+        return Err("Cancelled".to_string());
+    }
+    let (mut rx, child) = app
         .shell()
         .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar for AVIF decode: {}", e))?
-        .args(&args)
+        .map_err(|e| format!("Failed to create FFmpeg sidecar for {}: {}", what, e))?
+        .args(args)
         .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg for AVIF decode: {}", e))?;
+        .map_err(|e| format!("Failed to spawn FFmpeg for {}: {}", what, e))?;
+    register_job(app, job_id, child, output)?;
 
+    let mut code = None;
+    let mut terminated = false;
     while let Some(event) = rx.recv().await {
         if let CommandEvent::Terminated(status) = event {
-            if status.code == Some(0) {
-                return Ok(temp_str);
-            } else {
-                return Err(format!(
-                    "FFmpeg AVIF decoding failed (code {:?})",
-                    status.code
-                ));
-            }
+            code = status.code;
+            terminated = true;
+            break;
         }
     }
-
-    Err("FFmpeg AVIF decode process ended unexpectedly".to_string())
+    unregister_job(app, job_id);
+    if !terminated {
+        return Err(format!("FFmpeg {} process ended unexpectedly", what));
+    }
+    Ok(code)
 }
 
-/// Decode a HEIC/HEIF file to a temporary QOI via FFmpeg sidecar.
-async fn decode_heic_via_ffmpeg(app: &AppHandle, input: &str) -> Result<String, String> {
-    let temp_path = image_decode_temp_path("heic");
+/// Decode an AVIF or HEIC/HEIF file to a temporary QOI via FFmpeg (the image crate
+/// cannot decode these). The temp file is removed if the decode fails.
+async fn decode_via_ffmpeg(
+    app: &AppHandle,
+    job_id: &str,
+    job_output: &str,
+    input: &str,
+    kind: &str,
+) -> Result<String, String> {
+    let temp_path = image_decode_temp_path(kind);
     let temp_str = temp_path.to_string_lossy().to_string();
     let args = build_ffmpeg_image_decode_args(input, &temp_str);
 
-    let (mut rx, _child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar for HEIC decode: {}", e))?
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg for HEIC decode: {}", e))?;
-
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(status) = event {
-            if status.code == Some(0) {
-                return Ok(temp_str);
-            } else {
-                return Err(format!(
-                    "FFmpeg HEIC decoding failed (code {:?})",
-                    status.code
-                ));
-            }
+    let what = format!("{} decode", kind.to_uppercase());
+    let code = run_ffmpeg_helper(app, job_id, job_output, &args, &what).await;
+    match code {
+        Ok(Some(0)) => Ok(temp_str),
+        Ok(code) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(format!("FFmpeg {} failed (code {:?})", what, code))
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(e)
         }
     }
+}
 
-    Err("FFmpeg HEIC decode process ended unexpectedly".to_string())
+/// Everything after `Started`: decode (if needed), encode, clean up the decode temp.
+/// Kept as one fallible function so the caller can turn any `Err` into a proper
+/// `Error` event instead of propagating it and leaving the file "processing".
+async fn encode_image(
+    app: &AppHandle,
+    job_id: &str,
+    input: &str,
+    output: &str,
+    options: ImageOptions,
+    encoder_threads: usize,
+) -> Result<(), String> {
+    let decode_temp = if is_avif_input(input) {
+        Some(decode_via_ffmpeg(app, job_id, output, input, "avif").await?)
+    } else if is_heic_input(input) {
+        Some(decode_via_ffmpeg(app, job_id, output, input, "heic").await?)
+    } else {
+        None
+    };
+    let effective_input = decode_temp.as_deref().unwrap_or(input);
+
+    // AVIF with metadata preservation routes through FFmpeg sidecar
+    let needs_ffmpeg_avif = matches!(options.format, ImageFormat::Avif) && !options.strip_metadata;
+
+    let result = if needs_ffmpeg_avif {
+        // For AVIF output with metadata, use original input (FFmpeg handles the full pipeline)
+        compress_avif_with_ffmpeg(app, job_id, input, output, options.quality).await
+    } else {
+        let input_for_compress = effective_input.to_string();
+        let output_clone = output.to_string();
+        let native_guard = app
+            .try_state::<NativeJobs>()
+            .map(|n| NativeJobGuard::new(&n));
+        let joined = tokio::task::spawn_blocking(move || {
+            let _guard = native_guard;
+            img_compress::compress_with_threads(
+                &input_for_compress,
+                &output_clone,
+                &options,
+                encoder_threads,
+            )
+        })
+        .await;
+        match joined {
+            Ok(r) => r,
+            Err(e) => Err(format!("Task join error: {}", e)),
+        }
+    };
+
+    if let Some(ref temp) = decode_temp {
+        let _ = tokio::fs::remove_file(temp).await;
+    }
+    result
 }
 
 /// Compress one image. `encoder_threads` bounds the threads used by encoders that
@@ -142,8 +203,8 @@ pub async fn compress_image(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    // Atomic claim with auto-cleanup on early return (e.g. AVIF/HEIC decode failure).
-    let _output_claim = OutputClaim::claim(&output);
+    // Atomic claim with auto-cleanup of the 0-byte marker on every exit path.
+    let _output_claim = OutputClaim::claim(&output)?;
     let output = _output_claim.path().to_string();
 
     let _ = on_progress.send(ProgressEvent::Started {
@@ -155,46 +216,19 @@ pub async fn compress_image(
     let start = Instant::now();
 
     // Resolve Original → concrete format using the real input path (before AVIF temp substitution)
-    let effective_format = options.format.resolve_for_input(&input);
     let mut resolved_options = options.clone();
-    resolved_options.format = effective_format.clone();
+    resolved_options.format = options.format.resolve_for_input(&input);
 
-    // If input is AVIF or HEIC, decode via FFmpeg to a temp QOI first (image crate can't decode these)
-    let decode_temp = if is_avif_input(&input) {
-        Some(decode_avif_via_ffmpeg(&app, &input).await?)
-    } else if is_heic_input(&input) {
-        Some(decode_heic_via_ffmpeg(&app, &input).await?)
-    } else {
-        None
-    };
-    let effective_input = decode_temp.as_deref().unwrap_or(&input);
-
-    // AVIF with metadata preservation routes through FFmpeg sidecar
-    let needs_ffmpeg_avif =
-        matches!(effective_format, ImageFormat::Avif) && !resolved_options.strip_metadata;
-
-    let compression_result = if needs_ffmpeg_avif {
-        // For AVIF output with metadata, use original input (FFmpeg handles the full pipeline)
-        compress_avif_with_ffmpeg(&app, &input, &output, resolved_options.quality).await
-    } else {
-        let input_for_compress = effective_input.to_string();
-        let output_clone = output.clone();
-        tokio::task::spawn_blocking(move || {
-            img_compress::compress_with_threads(
-                &input_for_compress,
-                &output_clone,
-                &resolved_options,
-                encoder_threads,
-            )
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-    };
-
-    // Clean up decode temp file (AVIF or HEIC)
-    if let Some(ref temp) = decode_temp {
-        let _ = tokio::fs::remove_file(temp).await;
-    }
+    // No `?` from here on: every failure must produce a terminal event.
+    let compression_result = encode_image(
+        &app,
+        &job_id,
+        &input,
+        &output,
+        resolved_options,
+        encoder_threads,
+    )
+    .await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -205,7 +239,7 @@ pub async fn compress_image(
                 .map(|m| m.len())
                 .unwrap_or(0);
 
-            // If compressed is larger or equal, keep the smaller original.
+            // If compressed is larger, keep the smaller original.
             let output_size =
                 keep_original_if_larger(&input, &output, input_size, output_size).await;
 
@@ -226,6 +260,12 @@ pub async fn compress_image(
             Ok(result)
         }
         Err(e) => {
+            // A partially written output is worse than none.
+            if let Err(rm) = tokio::fs::remove_file(&output).await {
+                if rm.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(path = %output, error = %rm, "Failed to remove failed image output");
+                }
+            }
             let cancelled = crate::commands::queue::is_cancelled(&app);
             if cancelled {
                 tracing::info!(input = %input, "Image compression cancelled by user");
@@ -255,16 +295,23 @@ pub async fn compress_image(
     }
 }
 
+/// Map quality 0-100 to CRF 63-0 (FFmpeg libaom-av1: lower CRF = higher quality).
+fn avif_crf_for_quality(quality: u8) -> u8 {
+    let inverted = 100u32.saturating_sub(quality as u32);
+    (inverted * 63 / 100).min(63) as u8
+}
+
 async fn compress_avif_with_ffmpeg(
     app: &AppHandle,
+    job_id: &str,
     input: &str,
     output: &str,
     quality: u8,
 ) -> Result<(), String> {
-    // Map quality 0-100 to CRF 63-0 (FFmpeg libaom-av1: lower CRF = higher quality)
-    let crf = ((100 - quality) as f32 * 63.0 / 100.0) as u8;
+    let crf = avif_crf_for_quality(quality);
 
     let args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -279,28 +326,13 @@ async fn compress_avif_with_ffmpeg(
         output.into(),
     ];
 
-    let (mut rx, _child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("Failed to create FFmpeg sidecar: {}", e))?
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn FFmpeg for AVIF: {}", e))?;
-
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(status) = event {
-            if status.code == Some(0) {
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "FFmpeg AVIF encoding failed (code {:?}). Metadata may not be supported.",
-                    status.code
-                ));
-            }
-        }
+    match run_ffmpeg_helper(app, job_id, output, &args, "AVIF encode").await? {
+        Some(0) => Ok(()),
+        code => Err(format!(
+            "FFmpeg AVIF encoding failed (code {:?}). Metadata may not be supported.",
+            code
+        )),
     }
-
-    Err("FFmpeg AVIF process ended unexpectedly".to_string())
 }
 
 #[tauri::command]
@@ -310,6 +342,8 @@ pub async fn compress_images_batch(
     options: ImageOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
+    validate_image_options(&options)?;
+
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
@@ -318,7 +352,8 @@ pub async fn compress_images_batch(
     // AVIF/PNG job spin up its own full-size thread pool.
     let encoder_threads = image_encoder_threads(cores, max_concurrent, files.len());
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = Vec::new();
+    let mut handles = Vec::with_capacity(files.len());
+    let mut entry_paths = Vec::with_capacity(files.len());
 
     let cancel_flag = app
         .try_state::<CancelFlag>()
@@ -334,6 +369,7 @@ pub async fn compress_images_batch(
         let channel_clone = on_progress.clone();
         let sem = semaphore.clone();
         let cancel = cancel_flag.clone();
+        entry_paths.push((entry.input.clone(), entry.output.clone()));
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
             // Re-check after acquiring the permit — by the time a queued task runs,
@@ -363,17 +399,18 @@ pub async fn compress_images_batch(
         handles.push(handle);
     }
 
-    let mut results = Vec::new();
-    for handle in handles {
+    let mut results = Vec::with_capacity(handles.len());
+    for (handle, (input_path, output_path)) in handles.into_iter().zip(entry_paths) {
         match handle.await {
             Ok(Ok(result)) => results.push(result),
             Ok(Err(e)) => {
-                tracing::warn!(error = %e, "Image task failed at IPC level, continuing batch");
-                // Collect the error as a failed result instead of aborting the entire batch
+                // Setup-level failure (output dir, claim): no Started/Error event was
+                // sent, so the result carries the paths for the frontend to reconcile.
+                tracing::warn!(error = %e, input = %input_path, "Image task failed before start, continuing batch");
                 results.push(CompressionResult {
                     job_id: Uuid::new_v4().to_string(),
-                    input_path: String::new(),
-                    output_path: String::new(),
+                    input_path,
+                    output_path,
                     input_size: 0,
                     output_size: 0,
                     duration_ms: 0,
@@ -382,11 +419,11 @@ pub async fn compress_images_batch(
                 });
             }
             Err(e) => {
-                tracing::warn!(error = %e, "Image task join error, continuing batch");
+                tracing::warn!(error = %e, input = %input_path, "Image task join error, continuing batch");
                 results.push(CompressionResult {
                     job_id: Uuid::new_v4().to_string(),
-                    input_path: String::new(),
-                    output_path: String::new(),
+                    input_path,
+                    output_path,
                     input_size: 0,
                     output_size: 0,
                     duration_ms: 0,
@@ -431,7 +468,17 @@ mod tests {
     fn ffmpeg_decode_args_use_rgba_for_qoi() {
         let args = build_ffmpeg_image_decode_args("in.avif", "out.qoi");
 
+        assert_eq!(args.first().map(String::as_str), Some("-nostdin"));
         assert!(args.windows(2).any(|pair| pair == ["-pix_fmt", "rgba"]));
         assert_eq!(args.last().map(String::as_str), Some("out.qoi"));
+    }
+
+    #[test]
+    fn avif_crf_never_wraps() {
+        assert_eq!(avif_crf_for_quality(100), 0);
+        assert_eq!(avif_crf_for_quality(0), 63);
+        assert_eq!(avif_crf_for_quality(50), 31);
+        // Out-of-range quality (rejected upstream by validation) still cannot wrap.
+        assert_eq!(avif_crf_for_quality(255), 0);
     }
 }

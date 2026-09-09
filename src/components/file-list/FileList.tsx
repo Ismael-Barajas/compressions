@@ -22,7 +22,8 @@ const THUMB_ROW_HEIGHT = 96;
 export function FileList() {
   const files = useCompressionStore((s) => s.files);
   const fileCount = useCompressionStore((s) => s.summary.total);
-  const hasQueued = useCompressionStore((s) => s.summary.queued > 0);
+  const queuedCount = useCompressionStore((s) => s.summary.queued);
+  const hasQueued = queuedCount > 0;
   const clearFiles = useCompressionStore((s) => s.clearFiles);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
   const isPaused = useCompressionStore((s) => s.isPaused);
@@ -154,7 +155,9 @@ export function FileList() {
         style={{ borderColor: "var(--border)" }}
       >
         <span className="font-data" style={{ color: "var(--text-muted)" }}>
-          {fileCount} file{fileCount !== 1 ? "s" : ""} queued
+          {hasQueued
+            ? `${queuedCount} file${queuedCount !== 1 ? "s" : ""} queued`
+            : `${fileCount} file${fileCount !== 1 ? "s" : ""}`}
         </span>
         <div className="flex gap-1.5">
           <ToolbarButton onClick={toggleThumbnails} title={showThumbnails ? "List view" : "Thumbnail view"}>
@@ -246,9 +249,10 @@ export function FileList() {
             <button
               className="btn-secondary flex items-center gap-2 px-6 py-2.5 text-[15px]"
               onClick={pauseCompression}
+              title="Files already in progress finish; nothing new starts until you resume"
             >
               <Pause size={16} fill="currentColor" />
-              Pause
+              Pause after batch
             </button>
           )}
           <button
