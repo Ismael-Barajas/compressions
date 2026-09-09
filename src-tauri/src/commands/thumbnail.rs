@@ -52,7 +52,7 @@ pub fn cache_dir() -> Result<PathBuf, String> {
 /// Generate a thumbnail for an image using the `image` crate, write to disk.
 async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let img = image::open(&path).map_err(|e| format!("Failed to open image: {e}"))?;
+        let img = crate::compression::image::open_image_bounded(&path)?;
         let thumb = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
         let mut buf = Vec::new();
         let mut cursor = Cursor::new(&mut buf);
@@ -75,8 +75,10 @@ async fn thumbnail_via_decode(
     path: &str,
     out_path: PathBuf,
 ) -> Result<(), String> {
+    // Unique per call: two concurrent requests for the same file must not share
+    // (and delete) one temp decode.
     let temp_dir = std::env::temp_dir();
-    let temp_name = format!("compressions_thumb_{}.png", path_hash(path));
+    let temp_name = format!("compressions_thumb_{}.png", uuid::Uuid::new_v4());
     let temp_path = temp_dir.join(&temp_name);
     let temp_str = temp_path
         .to_str()
@@ -85,6 +87,7 @@ async fn thumbnail_via_decode(
 
     // Decode to full-size PNG (no filters — avoids complex filtergraph conflict)
     let args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         path.into(),
@@ -150,8 +153,7 @@ async fn thumbnail_ffmpeg(
         .to_str()
         .ok_or_else(|| "Invalid output path".to_string())?;
 
-    let mut args = Vec::new();
-    args.push("-y".to_string());
+    let mut args = vec!["-nostdin".to_string(), "-y".to_string()];
     if is_video {
         args.push("-ss".to_string());
         args.push("1".to_string());

@@ -23,6 +23,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 mozjpeg = "0.10"
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# Already pulled in by oxipng; used directly to scope its thread pool per job.
+rayon = "1"
 webp = "0.3"
 ravif = "0.11"
 rgb = "0.8"

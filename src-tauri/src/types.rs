@@ -29,15 +29,20 @@ pub enum ImageFormat {
 impl ImageFormat {
     /// Resolve `Original` to a concrete format based on the input file extension.
     /// BMP/TIFF have no output encoder — fall back to PNG (lossless).
-    /// Returns self unchanged for concrete formats.
+    /// Returns self unchanged for concrete formats, except that a GIF input is
+    /// always re-encoded as GIF (animation is preserved and the frontend names the
+    /// output `.gif` regardless of the selected format).
     pub fn resolve_for_input(&self, input_path: &str) -> ImageFormat {
+        let ext = std::path::Path::new(input_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        if ext == "gif" {
+            return ImageFormat::Gif;
+        }
         match self {
             ImageFormat::Original => {
-                let ext = std::path::Path::new(input_path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.to_lowercase())
-                    .unwrap_or_default();
                 match ext.as_str() {
                     "jpg" | "jpeg" => ImageFormat::Jpeg,
                     "png" => ImageFormat::Png,

@@ -41,6 +41,7 @@ fn push_audio_encoding_args(args: &mut Vec<String>, opts: &AudioExtractionOption
 
 pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<String> {
     let mut args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -179,6 +180,7 @@ pub fn build_audio_extraction_args(
     opts: &AudioExtractionOptions,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -206,6 +208,7 @@ pub fn build_audio_compression_args(
     opts: &AudioExtractionOptions,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -254,6 +257,7 @@ pub fn build_gif_single_pass_args(
     );
 
     vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),

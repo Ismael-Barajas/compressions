@@ -15,7 +15,9 @@ const FORMATS: { value: ImageFormat; label: string }[] = [
 export function ImageControls() {
   const options = useCompressionStore((s) => s.imageOptions);
   const setOptions = useCompressionStore((s) => s.setImageOptions);
-  const [enableResize, setEnableResize] = useState(false);
+  // The store's `resize` is the source of truth for the checkbox, so presets
+  // (Thumbnail sets 300x300, others clear it) are reflected here.
+  const enableResize = options.resize != null;
   const [aspectLocked, setAspectLocked] = useState(true);
   const [fitDimension, setFitDimension] = useState<"width" | "height">("width");
 
@@ -70,8 +72,14 @@ export function ImageControls() {
             id="enable-resize"
             checked={enableResize}
             onChange={(e) => {
-              setEnableResize(e.target.checked);
-              if (!e.target.checked) setOptions({ resize: null, resizeMode: "fit" });
+              if (e.target.checked) {
+                // Checked == resize present: start from a locked-width default.
+                setAspectLocked(true);
+                setFitDimension("width");
+                setOptions({ resize: { width: 1920, height: 0 }, resizeMode: "fit" });
+              } else {
+                setOptions({ resize: null, resizeMode: "fit" });
+              }
             }}
           />
           <label htmlFor="enable-resize" className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>

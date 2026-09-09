@@ -594,6 +594,7 @@ dependencies = [
  "mozjpeg",
  "oxipng",
  "ravif 0.11.20",
+ "rayon",
  "reflink-copy",
  "regex",
  "rgb",

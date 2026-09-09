@@ -61,7 +61,7 @@ pub async fn prepare_job(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    let claim = OutputClaim::claim(output);
+    let claim = OutputClaim::claim(output)?;
     let output = claim.path().to_string();
 
     Ok(JobContext {
@@ -98,17 +98,27 @@ pub struct SidecarOutcome {
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
     pub stderr: String,
+    /// The user stopped this specific job (per-file Stop). Distinct from Cancel All,
+    /// which is a global flag read via `queue::is_cancelled`.
+    pub cancelled: bool,
 }
 
 const STDERR_CAP: usize = 4096;
 
 /// Spawn a sidecar, register it for cancellation under `ctx.job_id`, stream its
 /// stderr until it exits, and unregister it. Blocks only on the event channel.
+///
+/// Cancel All is checked both before the spawn and right after registration: a
+/// cancel that lands between the two would otherwise miss the child entirely.
 pub async fn run_sidecar(
     app: &AppHandle,
     ctx: &JobContext,
     spec: SidecarSpec<'_>,
 ) -> Result<SidecarOutcome, String> {
+    if crate::commands::queue::is_cancelled(app) {
+        return Err("Cancelled".to_string());
+    }
+
     let (mut rx, child) = app
         .shell()
         .sidecar(spec.sidecar)
@@ -117,7 +127,16 @@ pub async fn run_sidecar(
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", spec.sidecar, e))?;
 
-    register_job(app, &ctx.job_id, child, &ctx.output)?;
+    if let Err(e) = register_job(app, &ctx.job_id, child, &ctx.output) {
+        // Never leave an unregistered child running.
+        kill_job(app, &ctx.job_id);
+        return Err(e);
+    }
+
+    if crate::commands::queue::is_cancelled(app) {
+        // Cancel All drained `active_jobs` before we registered: kill it ourselves.
+        kill_job(app, &ctx.job_id);
+    }
 
     let start = Instant::now();
     let mut parser = spec.progress.map(|(total, _)| ProgressParser::new(total));
@@ -151,7 +170,7 @@ pub async fn run_sidecar(
                         stderr_tail.push_str(&line);
                         stderr_tail.push('\n');
                     } else {
-                        stderr_tail.push_str(&line[..remaining]);
+                        stderr_tail.push_str(truncate_at_char_boundary(&line, remaining));
                         stderr_tail.push_str("... [truncated]");
                     }
                 }
@@ -165,7 +184,7 @@ pub async fn run_sidecar(
         }
     }
 
-    unregister_job(app, &ctx.job_id);
+    let cancelled = unregister_job(app, &ctx.job_id);
 
     if !terminated {
         return Err(format!("{} process ended unexpectedly", spec.sidecar));
@@ -175,10 +194,22 @@ pub async fn run_sidecar(
         exit_code,
         duration_ms: start.elapsed().as_millis() as u64,
         stderr: stderr_tail,
+        cancelled,
     })
 }
 
-fn register_job(
+/// Longest prefix of `s` that is at most `max_bytes` long and ends on a char boundary.
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Insert the child into `active_jobs`. If the user already pressed Stop on this job
+/// id (possible when the request lands during spawn), the child is killed at once.
+pub(crate) fn register_job(
     app: &AppHandle,
     job_id: &str,
     child: tauri_plugin_shell::process::CommandChild,
@@ -188,45 +219,76 @@ fn register_job(
         .try_state::<Mutex<AppState>>()
         .ok_or_else(|| "AppState not managed".to_string())?;
     let mut guard = state.lock().map_err(|e| e.to_string())?;
+    if guard.cancelled_jobs.contains(job_id) {
+        tracing::info!(job_id = %job_id, "Job was stopped before its process registered; killing");
+        let _ = child.kill();
+        return Ok(());
+    }
     guard
         .active_jobs
         .insert(job_id.to_string(), (child, output.to_string()));
     Ok(())
 }
 
-fn unregister_job(app: &AppHandle, job_id: &str) {
+/// Remove the job from `active_jobs` and report whether it had been stopped by a
+/// per-file Stop (clearing that mark).
+pub(crate) fn unregister_job(app: &AppHandle, job_id: &str) -> bool {
+    let Some(state) = app.try_state::<Mutex<AppState>>() else {
+        return false;
+    };
+    let Ok(mut guard) = state.lock() else {
+        return false;
+    };
+    guard.active_jobs.remove(job_id);
+    guard.cancelled_jobs.remove(job_id)
+}
+
+/// Kill a registered child (no-op if it is not registered).
+fn kill_job(app: &AppHandle, job_id: &str) {
     if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(mut guard) = state.lock() {
-            guard.active_jobs.remove(job_id);
+            if let Some((child, _)) = guard.active_jobs.remove(job_id) {
+                let _ = child.kill();
+            }
         }
     }
 }
 
-/// If the encoder produced a file no smaller than the input, replace it with a copy
-/// of the original so the user always gets the smaller file. Uses a filesystem
-/// reflink where supported (APFS, Btrfs, XFS, ReFS) so multi-GB videos are cloned
-/// in milliseconds; falls back to a regular copy. Runs off the async runtime.
+/// If the encoder produced a file larger than the input, replace it with a copy of
+/// the original so the user always gets the smaller file. Uses a filesystem reflink
+/// where supported (APFS, Btrfs, XFS, ReFS) so multi-GB videos are cloned in
+/// milliseconds; falls back to a regular copy. Runs off the async runtime.
+///
+/// The copy goes to a sibling temp file that is then renamed over the output, so a
+/// failed copy (disk full, locked file) leaves the compressed output in place
+/// instead of leaving nothing at all.
 pub async fn keep_original_if_larger(
     input: &str,
     output: &str,
     input_size: u64,
     output_size: u64,
 ) -> u64 {
-    if input_size == 0 || output_size < input_size {
+    if input_size == 0 || output_size <= input_size {
         return output_size;
     }
     let input_owned = input.to_string();
     let output_owned = output.to_string();
     let copied = tokio::task::spawn_blocking(move || {
-        // Remove the bloated output first: reflink refuses to overwrite.
-        let _ = std::fs::remove_file(&output_owned);
-        reflink_copy::reflink_or_copy(&input_owned, &output_owned).map(|_| ())
+        let tmp = format!("{}.orig.tmp", output_owned);
+        let _ = std::fs::remove_file(&tmp);
+        let result = reflink_copy::reflink_or_copy(&input_owned, &tmp)
+            .map(|_| ())
+            .and_then(|()| std::fs::rename(&tmp, &output_owned));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
     })
     .await;
     match copied {
         Ok(Ok(())) => input_size,
         Ok(Err(e)) => {
-            tracing::warn!(path = %output, error = %e, "Failed to copy original over bloated output");
+            tracing::warn!(path = %output, error = %e, "Failed to copy original over bloated output; keeping compressed file");
             output_size
         }
         Err(e) => {
@@ -237,17 +299,19 @@ pub async fn keep_original_if_larger(
 }
 
 /// Turn a finished sidecar run into a `CompressionResult`, emit the terminal event,
-/// and record history. Cancel-aware: when the child died because of Cancel All, no
-/// error event is emitted and nothing is written to history.
+/// and record history. Cancel-aware: when the child died because of Cancel All or a
+/// per-file Stop (`job_cancelled`), no error event is emitted and nothing is written
+/// to history.
 pub async fn finish_job(
     app: &AppHandle,
     ctx: &JobContext,
     exit_code: Option<i32>,
     duration_ms: u64,
     error_detail: Option<String>,
+    job_cancelled: bool,
     on_progress: &Channel<ProgressEvent>,
 ) -> CompressionResult {
-    let success = exit_code == Some(0);
+    let success = exit_code == Some(0) && !job_cancelled;
     let mut output_size = tokio::fs::metadata(&ctx.output)
         .await
         .map(|m| m.len())
@@ -277,7 +341,7 @@ pub async fn finish_job(
         },
     };
 
-    let cancelled = crate::commands::queue::is_cancelled(app);
+    let cancelled = job_cancelled || crate::commands::queue::is_cancelled(app);
     if success {
         let _ = on_progress.send(ProgressEvent::Completed(result.clone()));
         tracing::info!(
@@ -440,6 +504,53 @@ mod tests {
 
         assert_eq!(size, 8);
         assert_eq!(std::fs::read(&output).unwrap(), b"original");
+    }
+
+    #[tokio::test]
+    async fn keep_original_keeps_compressed_when_copy_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out.bin");
+        std::fs::write(&output, b"compressed bytes").unwrap();
+        let missing_input = dir.path().join("does-not-exist.bin");
+
+        let size = keep_original_if_larger(
+            missing_input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            8,
+            16,
+        )
+        .await;
+
+        // Copy failed: the compressed output must survive and its size is reported.
+        assert_eq!(size, 16);
+        assert_eq!(std::fs::read(&output).unwrap(), b"compressed bytes");
+        assert!(!dir.path().join("out.bin.orig.tmp").exists());
+    }
+
+    #[tokio::test]
+    async fn keep_original_treats_equal_size_as_compressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.bin");
+        let output = dir.path().join("out.bin");
+        std::fs::write(&input, b"original").unwrap();
+        std::fs::write(&output, b"same len").unwrap();
+
+        let size =
+            keep_original_if_larger(input.to_str().unwrap(), output.to_str().unwrap(), 8, 8).await;
+
+        assert_eq!(size, 8);
+        assert_eq!(std::fs::read(&output).unwrap(), b"same len");
+    }
+
+    #[test]
+    fn truncation_respects_char_boundaries() {
+        let s = "héllo wörld";
+        for n in 0..=s.len() {
+            let t = truncate_at_char_boundary(s, n);
+            assert!(t.len() <= n);
+            assert!(s.starts_with(t));
+        }
+        assert_eq!(truncate_at_char_boundary("abc", 10), "abc");
     }
 
     #[tokio::test]

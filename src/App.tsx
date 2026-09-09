@@ -33,13 +33,13 @@ function App() {
       <div className="flex h-screen flex-col" style={{ backgroundColor: "var(--bg-primary)" }}>
         <Header />
         <AppShell />
-        {update.updateAvailable && update.updateVersion && (
+        {update.updateAvailable && !update.toastDismissed && update.updateVersion && (
           <UpdateToast
             version={update.updateVersion}
             downloading={update.downloading}
             downloadProgress={update.downloadProgress}
             onInstall={update.installUpdate}
-            onDismiss={update.dismiss}
+            onDismiss={update.hideToast}
           />
         )}
       </div>

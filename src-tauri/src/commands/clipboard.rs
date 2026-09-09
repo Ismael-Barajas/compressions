@@ -1,5 +1,5 @@
 use arboard::Clipboard;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 /// Read file paths from the system clipboard (e.g. files copied in Finder/Explorer).
@@ -14,35 +14,59 @@ pub async fn read_clipboard_files() -> Result<Vec<String>, String> {
 fn read_clipboard_files_sync() -> Result<Vec<String>, String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
-    // arboard doesn't have a direct "get files" API on all platforms,
-    // but we can try reading text and parsing file paths/URIs.
+    // Native file list first (CF_HDROP on Windows, NSFilenamesPboardType on macOS,
+    // text/uri-list on Linux): this is what "Copy" in a file manager produces.
+    if let Ok(files) = clipboard.get().file_list() {
+        let paths: Vec<String> = files
+            .into_iter()
+            .filter(|p| p.exists())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        if !paths.is_empty() {
+            return Ok(paths);
+        }
+    }
+
+    // Fall back to text: some apps put plain paths or file:// URIs on the clipboard.
     let text = clipboard.get_text().unwrap_or_default();
-    if text.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let mut paths = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // Handle file:// URIs (common on macOS/Linux)
-        let path_str = if let Some(stripped) = line.strip_prefix("file://") {
-            // URL-decode %20 etc.
-            urldecode(stripped)
-        } else {
-            line.to_string()
-        };
-
-        let path = PathBuf::from(&path_str);
-        if path.exists() {
-            paths.push(path.to_string_lossy().to_string());
-        }
-    }
-
-    Ok(paths)
+    Ok(paths_from_clipboard_text(&text)
+        .into_iter()
+        .filter(|p| Path::new(p).exists())
+        .collect())
 }
+
+/// Parse one path per line, accepting plain paths and `file://` URIs.
+fn paths_from_clipboard_text(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|line| match line.strip_prefix("file://") {
+            Some(uri) => file_uri_to_path(uri),
+            None => line.to_string(),
+        })
+        .collect()
+}
+
+/// Turn the part after `file://` into a local path. `file:///C:/x.png` must become
+/// `C:/x.png` on Windows (the leading slash is the URI's, not the path's), and a
+/// `localhost` authority is dropped.
+fn file_uri_to_path(after_scheme: &str) -> String {
+    let rest = after_scheme
+        .strip_prefix("localhost/")
+        .map(|r| format!("/{}", r))
+        .unwrap_or_else(|| after_scheme.to_string());
+    let decoded = urldecode(&rest);
+    let bytes = decoded.as_bytes();
+    let is_drive_path =
+        bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':';
+    if is_drive_path {
+        decoded[1..].to_string()
+    } else {
+        decoded
+    }
+}
+
+const CLIPBOARD_IMAGE_PREFIX: &str = "clipboard_";
 
 /// Save clipboard image data to a temporary PNG file.
 /// Returns the path to the saved file, or an error if no image is available.
@@ -53,6 +77,12 @@ pub async fn save_clipboard_image(app: tauri::AppHandle) -> Result<String, Strin
         .map_err(|e| format!("Clipboard task failed: {}", e))?
 }
 
+fn clipboard_temp_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .temp_dir()
+        .map_err(|e: tauri::Error| e.to_string())
+}
+
 fn save_clipboard_image_sync(app: &tauri::AppHandle) -> Result<String, String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
@@ -60,15 +90,14 @@ fn save_clipboard_image_sync(app: &tauri::AppHandle) -> Result<String, String> {
         .get_image()
         .map_err(|_| "No image in clipboard".to_string())?;
 
-    // Build temp dir path inside app's temp directory
-    let temp_dir = app
-        .path()
-        .temp_dir()
-        .map_err(|e: tauri::Error| e.to_string())?;
-
+    let temp_dir = clipboard_temp_dir(app)?;
     std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
 
-    let file_path = temp_dir.join(format!("clipboard_{}.png", uuid::Uuid::new_v4()));
+    let file_path = temp_dir.join(format!(
+        "{}{}.png",
+        CLIPBOARD_IMAGE_PREFIX,
+        uuid::Uuid::new_v4()
+    ));
 
     // Convert RGBA bytes to PNG
     let width = image.width as u32;
@@ -83,6 +112,28 @@ fn save_clipboard_image_sync(app: &tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Failed to save clipboard image: {}", e))?;
 
     Ok(file_path.to_string_lossy().to_string())
+}
+
+/// Delete every PNG this app saved from the clipboard. Called at startup (leftovers
+/// from a crash) and on exit; while the app runs the files may still be queued.
+pub fn cleanup_clipboard_images(app: &tauri::AppHandle) {
+    let Ok(dir) = clipboard_temp_dir(app) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let is_ours = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with(CLIPBOARD_IMAGE_PREFIX) && n.ends_with(".png"))
+            .unwrap_or(false);
+        if is_ours {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 fn urldecode(input: &str) -> String {
@@ -117,6 +168,30 @@ fn hex_val(b: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_uri_windows_drive_letter() {
+        assert_eq!(
+            file_uri_to_path("/C:/Users/me/a%20b.png"),
+            "C:/Users/me/a b.png"
+        );
+        assert_eq!(file_uri_to_path("localhost/C:/x.png"), "C:/x.png");
+    }
+
+    #[test]
+    fn file_uri_posix() {
+        assert_eq!(file_uri_to_path("/home/me/photo.jpg"), "/home/me/photo.jpg");
+        assert_eq!(file_uri_to_path("localhost/tmp/x.png"), "/tmp/x.png");
+    }
+
+    #[test]
+    fn clipboard_text_mixes_uris_and_plain_paths() {
+        let text = "file:///C:/a.png\r\n\r\n  D:\\b.mp4  \nfile:///tmp/c%20d.pdf";
+        assert_eq!(
+            paths_from_clipboard_text(text),
+            vec!["C:/a.png", "D:\\b.mp4", "/tmp/c d.pdf"]
+        );
+    }
 
     #[test]
     fn urldecode_percent20() {

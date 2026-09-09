@@ -31,7 +31,7 @@ export const FileItem = memo(function FileItem({ file, showThumbnails }: FileIte
   const removeFile = useCompressionStore((s) => s.removeFile);
   const retryFile = useCompressionStore((s) => s.retryFile);
   const isCompressing = useCompressionStore((s) => s.isCompressing);
-  const { cancelFile, extractAudioFromFile, convertToGif } = useCompression();
+  const { cancelFile, extractAudioFromFile, convertToGif, startCompression } = useCompression();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -61,6 +61,8 @@ export const FileItem = memo(function FileItem({ file, showThumbnails }: FileIte
   const handleContextMenu = (e: React.MouseEvent) => {
     if (file.mediaType !== "video") return;
     if (file.status === "processing") return;
+    // Tools share the backend cancel flag with the drain loop; don't mix them.
+    if (isCompressing) return;
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
@@ -95,7 +97,11 @@ export const FileItem = memo(function FileItem({ file, showThumbnails }: FileIte
       )}
       {file.result && file.result.success && (() => {
         const ext = file.result.outputPath.split(".").pop()?.toLowerCase();
-        const isAudio = ["mp3", "m4a", "flac", "opus", "wav"].includes(ext ?? "");
+        // Only a video → audio/GIF result is a conversion; compressing an audio
+        // file shows the normal savings line.
+        const isAudio =
+          file.mediaType === "video" &&
+          ["mp3", "m4a", "flac", "opus", "ogg", "wav"].includes(ext ?? "");
         const isGif = ext === "gif" && file.mediaType === "video";
         const isConversion = isAudio || isGif;
 
@@ -126,7 +132,15 @@ export const FileItem = memo(function FileItem({ file, showThumbnails }: FileIte
     </ActionButton>
   ) : file.status === "error" ? (
     <div className="flex items-center gap-0.5">
-      <ActionButton onClick={() => retryFile(file.id)} title="Retry" color="var(--accent)">
+      <ActionButton
+        onClick={() => {
+          retryFile(file.id);
+          // Re-queueing alone does nothing when no drain is running; kick one off.
+          if (!useCompressionStore.getState().isCompressing) startCompression();
+        }}
+        title="Retry"
+        color="var(--accent)"
+      >
         <RotateCcw size={14} />
       </ActionButton>
       <ActionButton onClick={() => removeFile(file.id)} title="Remove" color="var(--text-muted)">
