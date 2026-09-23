@@ -1,6 +1,7 @@
 # Compressions: Efficiency Wins, Round 2
 
-Status: **findings and plan only; nothing here is implemented yet.**
+Status: **implemented on `claude/efficiency-wins-planning-4usvvn`, except where an item says otherwise**
+(see [Implementation status](#implementation-status) at the end).
 Scope: everything after v1.2.0 (`docs/OPTIMIZATION_PLAN.md` covers the first pass, and all of it shipped).
 
 The earlier pass fixed most of the in-app waste: progress coalescing, O(1) store updates, history
@@ -19,7 +20,7 @@ Each item says what was verified and how. Where nothing could be measured, the i
 | 2 | Audio compression **re-encodes embedded cover art** (MP3/FLAC → PNG, M4A → H.264, Opus → Theora) | Anyone compressing a music library | Measured: typical MP3/FLAC saves **0%**, M4A **fails** | S |
 | 3 | Single-pass GIF **buffers the whole clip in RAM** | Long clips or large widths in Tools → GIF | Measured: **916 MB** (default) / **11.6 GB** (original width) for 2 min | S |
 | 4 | Drain loop waits for **all** media batches, so files added mid-run sit idle | "Drop more files while compressing" workflow | Code path | M |
-| 5 | Thumbnails: full-size JPEG decode, PNG intermediate for HEIC, all-or-nothing batch reply | Thumbnail view | Measured: JPEG **3.2×**, HEIC intermediate **~4×** faster | S each |
+| 5 | Thumbnails: full-size JPEG decode, PNG intermediate for HEIC, all-or-nothing batch reply | Thumbnail view | Measured: JPEG **1.8×**, HEIC intermediate **~4×** faster | S each |
 | 6 | "Keep metadata" AVIF runs libaom at its slowest default speed, ignores resize, and decodes the input twice | AVIF output with metadata kept | Measured: **63.7 s → 10.9 s** per 3 MP image, same size | S |
 | 7 | Bundle size: universal `gs` in single-arch builds, full duplicate `ffprobe` | Download and every auto-update | Inspected bundle: sidecars are 222 of 247 MB | S–M |
 | 8 | Smaller items: PNG buffer clone, startup HW probe, concurrency caps, probe semaphore | Various | Code path | S |
@@ -141,13 +142,18 @@ guard needs to be per type.
 
 ## 5. Thumbnails
 
-### 5a. Decode JPEGs at reduced size (3.2× faster per thumbnail)
-`thumbnail_image` fully decodes each image to make a 160 px thumbnail. For JPEG, libjpeg can
-decode directly at 1/2, 1/4 or 1/8 scale in the DCT domain. `mozjpeg` is already a dependency, via
-`Decompress::scale(n)`: pick the largest reduction that keeps the short side ≥ 160 px.
+### 5a. Decode JPEGs at reduced size (1.8× faster per thumbnail)
+`thumbnail_image` fully decodes each image to make a 160 px thumbnail. For JPEG, the decoder
+can instead decode directly at 1/2, 1/4 or 1/8 scale in the DCT domain, picking the smallest
+scale whose long side still covers 160 px.
 
-Measured on a 12 MP (4032×3024) JPEG: **200.9 ms → 63.0 ms** per thumbnail, with identical
-160×120 output. Peak memory drops from about 36 MB of RGB to under 1 MB. **Effort** S.
+Measured on a 12 MP (4032×3024) JPEG with `jpeg-decoder`: **~206 ms → ~116 ms** per
+thumbnail, with identical 160×120 output. Peak decode memory drops from about 36 MB of RGB to
+under 1 MB. Anything unusual (CMYK, decode errors) falls back to the existing full decode.
+
+`mozjpeg` (already a dependency) was faster still, at 63 ms, but it reports corrupt input by
+unwinding. Under the release profile's `panic = "abort"`, one broken JPEG would kill the app, so
+it is not used for decoding. **Effort** S.
 
 ### 5b. HEIC thumbnail intermediate: PNG → QOI (~4× faster)
 The compress path already switched its FFmpeg intermediate to QOI in 1.1.2, but
@@ -277,3 +283,19 @@ the full bundle (86 MB compressed).
 
 Each PR should keep `npm run test:run`, `cargo test --lib`, `cargo clippy -D warnings` and
 `cargo fmt --check` green, and add arg-builder or unit tests alongside the change.
+
+---
+
+## Implementation status
+
+| Item | Status |
+|------|--------|
+| 1. Native FFmpeg per macOS target + sidecar guard | Done. `download-ffmpeg.sh <target>` fetches native builds from Martin Riedl's build server. `check-sidecars.sh` fails the release if a sidecar has the wrong architecture or FFmpeg lacks an encoder the app uses. A new `Sidecars` workflow runs both on PRs that touch the download setup. The new source was not reachable from the authoring sandbox, so the PR's `Sidecars` run is the first real check. The optional libaom fallback for a missing `libsvtav1` is not done; the guard makes it unnecessary for shipped builds. |
+| 2. Audio cover art | Done: `-c:v copy` for MP3/FLAC/M4A and `-vn` for Opus/WAV. The generated args were run through FFmpeg: MP3 7.58 → 4.70 MB, M4A now succeeds (5.32 → 4.71 MB), and cover art keeps its `attached_pic` flag. |
+| 3. GIF memory | Done. Single pass under a 256 MB buffer estimate, two passes otherwise. The generated two-pass args on the 2-minute clip peak at 149 MB, with the same GIF size. During pass 1, FFmpeg reports no progress (`palettegen` only emits at the end), so the row shows its indeterminate state until 50%. |
+| 4. Per-type drain loops | Done: `drainQueue` in `compressionController.ts`, with tests for mid-run additions and pause. |
+| 5a–5c. Thumbnails | Done. 5d (keep the cache across sessions) is not done; it trades against leaving thumbnails of user files in the temp dir. |
+| 6. AVIF metadata path | Done: `-cpu-used 6 -row-mt 1 -threads`, resize applied, and no unused temp decode. |
+| 7. Bundle size | `gs` thinning done. Dropping `ffprobe` is not done; it needs a parsing corpus first. |
+| 8. Small items | Done: PNG buffer move, concurrent HW encoder checks, one shared probe semaphore, single-scaler video resize. Not done: raising the audio/PDF concurrency caps, which needs measuring on a many-core machine. |
+| Bugs | Stuck row on AVIF/HEIC decode failure: fixed. Audio rows showing cover-art resolution: fixed. M4A, AV1 on macOS, and AVIF resize: see items 2, 1 and 6. |
