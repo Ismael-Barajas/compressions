@@ -4,7 +4,10 @@ set -euo pipefail
 # Download Ghostscript binary for the current platform.
 # Places it in src-tauri/binaries/ with Tauri target-triple naming.
 #
-# macOS: Extracts universal binary from Richard Koch's .pkg
+# Usage: download-gs.sh [target-triple]
+#
+# macOS: Extracts the universal binary from Richard Koch's .pkg and keeps only the
+#        target's slice (~30 MB instead of ~60 MB). The target defaults to the host.
 # Linux/Windows (via WSL/MSYS): Downloads Windows installer and extracts gswin64c.exe + gsdll64.dll
 
 GS_VERSION="10.07.0"
@@ -16,13 +19,21 @@ mkdir -p "$BIN_DIR"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
+TARGET="${1:-}"
 
 case "$OS" in
   Darwin)
-    case "$ARCH" in
-      x86_64) TARGET="x86_64-apple-darwin" ;;
-      arm64)  TARGET="aarch64-apple-darwin" ;;
-      *)      echo "Unsupported macOS architecture: $ARCH"; exit 1 ;;
+    if [ -z "$TARGET" ]; then
+      case "$ARCH" in
+        x86_64) TARGET="x86_64-apple-darwin" ;;
+        arm64)  TARGET="aarch64-apple-darwin" ;;
+        *)      echo "Unsupported macOS architecture: $ARCH"; exit 1 ;;
+      esac
+    fi
+    case "$TARGET" in
+      aarch64-apple-darwin) LIPO_ARCH="arm64" ;;
+      x86_64-apple-darwin)  LIPO_ARCH="x86_64" ;;
+      *) echo "Unsupported macOS target: $TARGET"; exit 1 ;;
     esac
 
     PKG_URL="https://pages.uoregon.edu/koch/Ghostscript-${GS_VERSION}.pkg"
@@ -62,8 +73,13 @@ case "$OS" in
       exit 1
     fi
 
-    echo "Found gs binary at: $GS_BIN"
-    cp "$GS_BIN" "$BIN_DIR/gs-$TARGET"
+    echo "Found gs binary at: $GS_BIN ($(lipo -archs "$GS_BIN"))"
+    if [ "$(lipo -archs "$GS_BIN" | wc -w)" -gt 1 ]; then
+      # Universal binary: ship only the slice this target runs.
+      lipo "$GS_BIN" -thin "$LIPO_ARCH" -output "$BIN_DIR/gs-$TARGET"
+    else
+      cp "$GS_BIN" "$BIN_DIR/gs-$TARGET"
+    fi
     chmod +x "$BIN_DIR/gs-$TARGET"
 
     # Copy Ghostscript resource files (fonts, init scripts, ICC profiles)

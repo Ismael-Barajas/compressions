@@ -65,26 +65,17 @@ jobs:
 
       # ── Download sidecars ────────────────────────────────────────────
 
+      # Both macOS targets build on the same (arm64) runner, so each downloads the
+      # sidecars for its own target instead of reusing the host's.
       - name: Download FFmpeg (macOS)
         if: matrix.platform == 'macos-latest'
         run: |
-          bash scripts/download-ffmpeg.sh
-          # evermeet.cx provides universal binaries — ensure both target names exist
-          for bin in ffmpeg ffprobe; do
-            if [ ! -f "src-tauri/binaries/${bin}-x86_64-apple-darwin" ]; then
-              cp "src-tauri/binaries/${bin}-aarch64-apple-darwin" "src-tauri/binaries/${bin}-x86_64-apple-darwin"
-            fi
-          done
+          bash scripts/download-ffmpeg.sh ${{ matrix.target }}
           ls -la src-tauri/binaries/
 
       - name: Download Ghostscript (macOS)
         if: matrix.platform == 'macos-latest'
-        run: |
-          bash scripts/download-gs.sh
-          # Universal binary — ensure both target names exist
-          if [ ! -f "src-tauri/binaries/gs-x86_64-apple-darwin" ]; then
-            cp "src-tauri/binaries/gs-aarch64-apple-darwin" "src-tauri/binaries/gs-x86_64-apple-darwin"
-          fi
+        run: bash scripts/download-gs.sh ${{ matrix.target }}
 
       - name: Download FFmpeg (Windows)
         if: matrix.platform == 'windows-latest'
@@ -133,6 +124,10 @@ jobs:
           echo "Ghostscript resources installed:"
           ls -la src-tauri/binaries/gs-res/
           ls -la src-tauri/binaries/gs*
+
+      - name: Verify sidecars
+        shell: bash
+        run: bash scripts/check-sidecars.sh ${{ matrix.target }}
 
       # ── Build & Release ──────────────────────────────────────────────
 
