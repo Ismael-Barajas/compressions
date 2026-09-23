@@ -36,9 +36,23 @@ pub async fn detect_hw_encoders(app: &AppHandle) -> HashSet<String> {
         }
     };
 
-    let mut working = HashSet::new();
+    // Verify concurrently: each check is a separate FFmpeg spawn, and running them
+    // back to back only delays when a video dropped right after launch can use them.
+    let mut checks = tokio::task::JoinSet::new();
     for name in listed {
-        match verify_hw_encoder(app, &name).await {
+        let app = app.clone();
+        checks.spawn(async move {
+            let verdict = verify_hw_encoder(&app, &name).await;
+            (name, verdict)
+        });
+    }
+
+    let mut working = HashSet::new();
+    while let Some(joined) = checks.join_next().await {
+        let Ok((name, verdict)) = joined else {
+            continue;
+        };
+        match verdict {
             Ok(true) => {
                 working.insert(name);
             }

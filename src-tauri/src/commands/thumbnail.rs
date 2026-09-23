@@ -5,13 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::AppHandle;
+use image::DynamicImage;
+use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tokio::time::timeout;
 
 use crate::media::{extension_of, VIDEO_EXTENSIONS};
 use crate::state::ThumbnailSemaphore;
+use crate::types::ThumbnailEvent;
 
 const THUMB_SIZE: u32 = 160;
 const FFMPEG_THUMB_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,10 +51,42 @@ pub fn cache_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn is_jpeg_path(path: &str) -> bool {
+    matches!(get_extension(path).as_str(), "jpg" | "jpeg")
+}
+
+/// Decode a JPEG at the smallest DCT scale (1/2, 1/4 or 1/8) that still covers the
+/// thumbnail box, skipping most of the IDCT and color conversion: a 12 MP photo
+/// decodes to ~0.6 MB of pixels instead of ~36 MB. Returns `None` for anything
+/// unusual (CMYK, 16-bit, decode errors) so the caller falls back to a full decode.
+fn decode_jpeg_scaled(path: &str, min_side: u16) -> Option<DynamicImage> {
+    use jpeg_decoder::{Decoder, PixelFormat};
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut decoder = Decoder::new(std::io::BufReader::new(file));
+    decoder.read_info().ok()?;
+    let (w, h) = decoder.scale(min_side, min_side).ok()?;
+    let pixels = decoder.decode().ok()?;
+    let (w, h) = (u32::from(w), u32::from(h));
+    match decoder.info()?.pixel_format {
+        PixelFormat::RGB24 => image::RgbImage::from_raw(w, h, pixels).map(DynamicImage::ImageRgb8),
+        PixelFormat::L8 => image::GrayImage::from_raw(w, h, pixels).map(DynamicImage::ImageLuma8),
+        _ => None,
+    }
+}
+
 /// Generate a thumbnail for an image using the `image` crate, write to disk.
 async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let img = image::open(&path).map_err(|e| format!("Failed to open image: {e}"))?;
+        let scaled = if is_jpeg_path(&path) {
+            decode_jpeg_scaled(&path, THUMB_SIZE as u16)
+        } else {
+            None
+        };
+        let img = match scaled {
+            Some(img) => img,
+            None => image::open(&path).map_err(|e| format!("Failed to open image: {e}"))?,
+        };
         let thumb = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
         let mut buf = Vec::new();
         let mut cursor = Cursor::new(&mut buf);
@@ -67,23 +101,25 @@ async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> 
     Ok(())
 }
 
-/// Decode an image to a temp PNG via FFmpeg, then thumbnail with the `image` crate.
+/// Decode an image to a temp QOI via FFmpeg, then thumbnail with the `image` crate.
 /// Used for formats the `image` crate can't decode directly (HEIC/HEIF) where FFmpeg's
 /// tile grid assembly uses an internal complex filtergraph that conflicts with `-vf`.
+/// QOI rather than PNG: for a 12 MP frame FFmpeg writes it in 0.68 s instead of 3.1 s
+/// and it reads back in about half the time (same reason as the compress path).
 async fn thumbnail_via_decode(
     app: &AppHandle,
     path: &str,
     out_path: PathBuf,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let temp_name = format!("compressions_thumb_{}.png", path_hash(path));
+    let temp_name = format!("compressions_thumb_{}.qoi", path_hash(path));
     let temp_path = temp_dir.join(&temp_name);
     let temp_str = temp_path
         .to_str()
         .ok_or_else(|| "Invalid temp path".to_string())?
         .to_string();
 
-    // Decode to full-size PNG (no filters — avoids complex filtergraph conflict)
+    // Decode to full-size QOI (no filters — avoids complex filtergraph conflict)
     let args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
@@ -129,7 +165,7 @@ async fn thumbnail_via_decode(
         return Err("FFmpeg decode did not produce output".to_string());
     }
 
-    // Now thumbnail the decoded PNG with the image crate
+    // Now thumbnail the decoded frame with the image crate
     let result = thumbnail_image(temp_str.clone(), out_path).await;
 
     // Clean up temp file
@@ -240,7 +276,7 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
         thumbnail_image(path.to_string(), out_path.clone()).await
     } else if ext == "heic" || ext == "heif" {
         // HEIC uses tile grids internally — FFmpeg assembles them via a complex
-        // filtergraph, so we can't add -vf filters. Decode to temp PNG first,
+        // filtergraph, so we can't add -vf filters. Decode to a temp QOI first,
         // then thumbnail with the image crate.
         thumbnail_via_decode(app, path, out_path.clone()).await
     } else if ext == "avif" {
@@ -266,35 +302,37 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
     }
 }
 
+/// Generate thumbnails for `paths`, streaming each result on `on_result` as soon
+/// as it is ready so one slow item (a video seek, a HEIC decode) never holds back
+/// the rest of the visible rows.
 #[tauri::command]
 pub async fn generate_thumbnails_batch(
     app: AppHandle,
     state: tauri::State<'_, ThumbnailSemaphore>,
     paths: Vec<String>,
-) -> Result<Vec<(String, Option<String>)>, String> {
+    on_result: Channel<ThumbnailEvent>,
+) -> Result<(), String> {
     let sem = Arc::clone(&state.0);
     let mut set = tokio::task::JoinSet::new();
 
     for path in paths {
         let app = app.clone();
         let sem = Arc::clone(&sem);
+        let on_result = on_result.clone();
         set.spawn(async move {
-            let _permit = match sem.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return (path, None),
+            let thumbnail_path = match sem.acquire_owned().await {
+                Ok(_permit) => generate_one(&app, &path).await.unwrap_or(None),
+                Err(_) => None,
             };
-            let thumb = generate_one(&app, &path).await.unwrap_or(None);
-            (path, thumb)
+            let _ = on_result.send(ThumbnailEvent {
+                path,
+                thumbnail_path,
+            });
         });
     }
 
-    let mut results = Vec::new();
-    while let Some(res) = set.join_next().await {
-        if let Ok(entry) = res {
-            results.push(entry);
-        }
-    }
-    Ok(results)
+    while set.join_next().await.is_some() {}
+    Ok(())
 }
 
 #[tauri::command]
@@ -311,5 +349,71 @@ pub fn cleanup_thumbnail_cache() {
                 tracing::warn!(error = %e, "Failed to clear thumbnail cache");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_jpeg(path: &std::path::Path, img: DynamicImage) {
+        img.save_with_format(path, image::ImageFormat::Jpeg)
+            .unwrap();
+    }
+
+    #[test]
+    fn scaled_decode_picks_smallest_scale_covering_the_box() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.jpg");
+        write_jpeg(
+            &path,
+            DynamicImage::ImageRgb8(image::RgbImage::from_fn(1600, 1200, |x, y| {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, 90])
+            })),
+        );
+        let img = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
+        // A fit-inside thumbnail only needs the long side to reach 160 px, so 1/8
+        // (200x150) is enough and still thumbnails to the same 160x120.
+        assert_eq!((img.width(), img.height()), (200, 150));
+        assert_eq!(img.thumbnail(THUMB_SIZE, THUMB_SIZE).width(), 160);
+    }
+
+    #[test]
+    fn scaled_decode_keeps_grayscale() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gray.jpg");
+        write_jpeg(
+            &path,
+            DynamicImage::ImageLuma8(image::GrayImage::from_fn(800, 600, |x, _| {
+                image::Luma([(x % 256) as u8])
+            })),
+        );
+        let img = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
+        assert!(matches!(img, DynamicImage::ImageLuma8(_)));
+    }
+
+    #[test]
+    fn scaled_decode_rejects_corrupt_input_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.jpg");
+        std::fs::write(&path, b"\xFF\xD8\xFF\xE0not really a jpeg").unwrap();
+        assert!(decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).is_none());
+    }
+
+    #[tokio::test]
+    async fn jpeg_thumbnail_fits_the_box() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        write_jpeg(
+            &path,
+            DynamicImage::ImageRgb8(image::RgbImage::from_fn(2000, 1000, |x, y| {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, 30])
+            })),
+        );
+        let out = dir.path().join("thumb.jpg");
+        thumbnail_image(path.to_string_lossy().to_string(), out.clone())
+            .await
+            .unwrap();
+        assert_eq!(image::image_dimensions(&out).unwrap(), (160, 80));
     }
 }

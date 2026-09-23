@@ -48,7 +48,7 @@ pub fn compress_with_threads(
 
     match effective_format {
         ImageFormat::Jpeg => encode_jpeg(&img, input, output, options.quality, preserve),
-        ImageFormat::Png => encode_png(&img, output, preserve),
+        ImageFormat::Png => encode_png(img, output, preserve),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
         ImageFormat::Avif => encode_avif(&img, output, options.quality, threads),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
@@ -174,8 +174,10 @@ fn copy_exif_jpeg(input: &str, data: &[u8]) -> Option<Vec<u8>> {
 /// Encode PNG by handing raw pixels straight to oxipng. The previous pipeline
 /// wrote a PNG with the `image` crate, then had oxipng decode and re-encode it;
 /// this skips that round trip and keeps grayscale/RGB inputs in their native
-/// layout instead of inflating everything to RGBA first.
-fn encode_png(img: &DynamicImage, output: &str, preserve_metadata: bool) -> Result<(), String> {
+/// layout instead of inflating everything to RGBA first. Takes the image by value
+/// so its buffer moves into oxipng instead of being copied (one full frame less
+/// per concurrent job).
+fn encode_png(img: DynamicImage, output: &str, preserve_metadata: bool) -> Result<(), String> {
     use oxipng::{BitDepth, ColorType, RawImage};
 
     let (width, height) = (img.width(), img.height());
@@ -184,16 +186,16 @@ fn encode_png(img: &DynamicImage, output: &str, preserve_metadata: bool) -> Resu
             ColorType::Grayscale {
                 transparent_shade: None,
             },
-            b.as_raw().clone(),
+            b.into_raw(),
         ),
-        DynamicImage::ImageLumaA8(b) => (ColorType::GrayscaleAlpha, b.as_raw().clone()),
+        DynamicImage::ImageLumaA8(b) => (ColorType::GrayscaleAlpha, b.into_raw()),
         DynamicImage::ImageRgb8(b) => (
             ColorType::RGB {
                 transparent_color: None,
             },
-            b.as_raw().clone(),
+            b.into_raw(),
         ),
-        DynamicImage::ImageRgba8(b) => (ColorType::RGBA, b.as_raw().clone()),
+        DynamicImage::ImageRgba8(b) => (ColorType::RGBA, b.into_raw()),
         other if other.color().has_alpha() => (ColorType::RGBA, other.to_rgba8().into_raw()),
         other => (
             ColorType::RGB {

@@ -9,7 +9,7 @@ pub mod types;
 mod utils;
 mod validate;
 
-use state::{AppState, CancelFlag, HwEncoders, ThumbnailSemaphore};
+use state::{AppState, CancelFlag, HwEncoders, ProbeSemaphore, ThumbnailSemaphore};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -35,6 +35,7 @@ pub fn run() {
         .manage(HwEncoders::default())
         .manage(CancelFlag::default())
         .manage(ThumbnailSemaphore(Arc::new(tokio::sync::Semaphore::new(4))))
+        .manage(ProbeSemaphore(Arc::new(tokio::sync::Semaphore::new(6))))
         .setup(|app| {
             // Set window icon explicitly so it shows in dev mode too
             if let Some(window) = app.get_webview_window("main") {

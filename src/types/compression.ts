@@ -95,6 +95,12 @@ export interface SupportedMedia {
   pdf: string[];
 }
 
+/** One finished thumbnail; `thumbnailPath` is null when none could be made. */
+export interface ThumbnailEvent {
+  path: string;
+  thumbnailPath: string | null;
+}
+
 export interface ProbeEvent {
   path: string;
   size: number;

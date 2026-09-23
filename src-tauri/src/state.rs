@@ -21,3 +21,7 @@ pub struct HwEncoders(pub RwLock<HashSet<String>>);
 /// Limits concurrent thumbnail generation (especially FFmpeg spawns).
 /// Wrapped in Arc so batch tasks can take owned permits via acquire_owned().
 pub struct ThumbnailSemaphore(pub Arc<tokio::sync::Semaphore>);
+
+/// Limits concurrent ffprobe/header reads across every `probe_files_batch` call, so
+/// several quick drops share one budget instead of each getting its own.
+pub struct ProbeSemaphore(pub Arc<tokio::sync::Semaphore>);

@@ -1,6 +1,6 @@
 use crate::types::{
     AudioCodec, AudioExtractionOptions, AudioOutputFormat, DitherMode, GifConversionOptions,
-    VideoCodec, VideoOptions,
+    Resolution, VideoCodec, VideoOptions,
 };
 
 /// How often FFmpeg emits a progress block. The backend additionally throttles
@@ -115,11 +115,12 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         args.push(opts.crf.to_string());
     }
 
-    // Resolution — downscale only, maintain aspect ratio, ensure even dimensions
+    // Resolution — downscale only, maintain aspect ratio, ensure even dimensions.
+    // `force_divisible_by` rounds in the same scaler instead of a second `scale` pass.
     if let Some(ref res) = opts.resolution {
         args.push("-vf".into());
         args.push(format!(
-            "scale='min({w},iw)':'min({h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "scale='min({w},iw)':'min({h},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
             w = res.width, h = res.height
         ));
     }
@@ -197,8 +198,24 @@ pub fn build_audio_extraction_args(
     args
 }
 
-/// Build FFmpeg args for audio compression. Same as extraction but without `-vn`
-/// (input is already an audio file, not a video).
+/// Embedded cover art arrives as an attached-picture video stream. Left alone,
+/// FFmpeg transcodes it to the muxer's default video codec: a JPEG cover becomes a
+/// multi-MB PNG (MP3/FLAC, often making the output larger than the input), libx264
+/// output the ipod muxer then rejects (M4A fails outright), or a Theora track (Ogg).
+/// Keep the cover's bytes where the container supports it; drop it where it doesn't.
+fn push_cover_art_args(args: &mut Vec<String>, format: &AudioOutputFormat) {
+    match format {
+        AudioOutputFormat::Mp3 | AudioOutputFormat::Flac | AudioOutputFormat::Aac => {
+            args.push("-c:v".into());
+            args.push("copy".into());
+        }
+        // The Ogg muxer can't stream-copy an image and WAV has no place for one.
+        AudioOutputFormat::Opus | AudioOutputFormat::Wav => args.push("-vn".into()),
+    }
+}
+
+/// Build FFmpeg args for audio compression. Unlike extraction, the video stream (if
+/// any) is the file's cover art, which is copied or dropped rather than re-encoded.
 /// The caller must resolve `Original` to a concrete `AudioOutputFormat` before calling this.
 pub fn build_audio_compression_args(
     input: &str,
@@ -217,6 +234,7 @@ pub fn build_audio_compression_args(
     ];
 
     push_audio_encoding_args(&mut args, opts);
+    push_cover_art_args(&mut args, &opts.format);
 
     args.push(output.into());
     args
@@ -238,9 +256,101 @@ fn gif_prefilter(opts: &GifConversionOptions) -> String {
     parts.join(",")
 }
 
+/// Memory the single-pass GIF graph may buffer before falling back to two passes.
+pub const GIF_SINGLE_PASS_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Bytes the single-pass graph holds at its peak. `palettegen` only emits the
+/// palette at end of stream, so every filtered frame queues on the `paletteuse`
+/// branch until then: frames × output width × output height × 4 (RGB32). Measured
+/// on a 2-minute 1080p clip: 916 MB at 480 px wide, 11.6 GB at original width.
+/// `None` when the duration or source resolution is unknown.
+pub fn gif_single_pass_buffer_bytes(
+    opts: &GifConversionOptions,
+    duration: Option<f64>,
+    source: Option<&Resolution>,
+) -> Option<u64> {
+    let duration = duration.filter(|d| d.is_finite() && *d > 0.0)?;
+    let src = source.filter(|r| r.width > 0 && r.height > 0)?;
+    let (w, h) = match opts.width {
+        Some(w) if w > 0 => {
+            let h = (src.height as f64 * w as f64 / src.width as f64).round();
+            (w as f64, h.max(1.0))
+        }
+        _ => (src.width as f64, src.height as f64),
+    };
+    let frames = (duration * opts.fps as f64).ceil();
+    Some((frames * w * h * 4.0) as u64)
+}
+
+/// Single pass reads the source once (about 13% faster at the default 480 px), but
+/// its memory grows with the clip. Use it only when the buffer is known to be small.
+pub fn gif_prefers_single_pass(
+    opts: &GifConversionOptions,
+    duration: Option<f64>,
+    source: Option<&Resolution>,
+) -> bool {
+    gif_single_pass_buffer_bytes(opts, duration, source)
+        .is_some_and(|bytes| bytes <= GIF_SINGLE_PASS_BUDGET_BYTES)
+}
+
+fn progress_args() -> [String; 5] {
+    [
+        "-nostats".into(),
+        "-progress".into(),
+        "pipe:2".into(),
+        "-stats_period".into(),
+        PROGRESS_PERIOD.into(),
+    ]
+}
+
+/// Two-pass GIF, pass 1: analyze the whole clip into a palette image. Memory stays
+/// flat regardless of clip length.
+pub fn build_gif_palette_args(
+    input: &str,
+    palette: &str,
+    opts: &GifConversionOptions,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-y".into(), "-i".into(), input.into()];
+    args.extend(progress_args());
+    args.push("-vf".into());
+    args.push(format!(
+        "{pre},palettegen=max_colors={colors}:stats_mode=diff",
+        pre = gif_prefilter(opts),
+        colors = opts.max_colors,
+    ));
+    args.push(palette.into());
+    args
+}
+
+/// Two-pass GIF, pass 2: re-read the source and map it onto the palette.
+pub fn build_gif_paletteuse_args(
+    input: &str,
+    palette: &str,
+    output: &str,
+    opts: &GifConversionOptions,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-y".into(),
+        "-i".into(),
+        input.into(),
+        "-i".into(),
+        palette.into(),
+    ];
+    args.extend(progress_args());
+    args.push("-filter_complex".into());
+    args.push(format!(
+        "[0:v]{pre}[x];[x][1:v]paletteuse={dither}",
+        pre = gif_prefilter(opts),
+        dither = gif_dither_arg(&opts.dither),
+    ));
+    args.push(output.into());
+    args
+}
+
 /// Build args for a single-pass video-to-GIF conversion. The decoded, scaled
 /// stream is split so `palettegen` and `paletteuse` share one decode: the source
-/// is read once instead of twice and no temporary palette file is written.
+/// is read once instead of twice and no temporary palette file is written. Only
+/// for short clips; see [`gif_prefers_single_pass`].
 pub fn build_gif_single_pass_args(
     input: &str,
     output: &str,
@@ -411,6 +521,134 @@ mod tests {
         assert!(graph.contains("[b][p]paletteuse=dither=bayer:bayer_scale=3"));
         assert!(args.contains(&"-progress".to_string()));
         assert_eq!(args.last().map(String::as_str), Some("out.gif"));
+    }
+
+    fn audio_opts(format: AudioOutputFormat) -> AudioExtractionOptions {
+        AudioExtractionOptions {
+            format,
+            bitrate: Some("192k".into()),
+            sample_rate: None,
+        }
+    }
+
+    #[test]
+    fn audio_compression_copies_cover_art_where_supported() {
+        for format in [
+            AudioOutputFormat::Mp3,
+            AudioOutputFormat::Flac,
+            AudioOutputFormat::Aac,
+        ] {
+            let args = build_audio_compression_args("in", "out", &audio_opts(format));
+            assert!(args.windows(2).any(|p| p == ["-c:v", "copy"]));
+            assert!(!args.contains(&"-vn".to_string()));
+        }
+    }
+
+    #[test]
+    fn audio_compression_drops_cover_art_where_unsupported() {
+        for format in [AudioOutputFormat::Opus, AudioOutputFormat::Wav] {
+            let args = build_audio_compression_args("in", "out", &audio_opts(format));
+            assert!(args.contains(&"-vn".to_string()));
+            assert!(!args.contains(&"-c:v".to_string()));
+        }
+    }
+
+    fn gif_opts(width: Option<u32>) -> GifConversionOptions {
+        GifConversionOptions {
+            fps: 12,
+            width,
+            max_colors: 128,
+            dither: DitherMode::Bayer,
+        }
+    }
+
+    #[test]
+    fn gif_buffer_estimate_matches_frame_math() {
+        let src = Resolution {
+            width: 1920,
+            height: 1080,
+        };
+        // 120 s × 12 fps × 480×270 × 4 bytes
+        assert_eq!(
+            gif_single_pass_buffer_bytes(&gif_opts(Some(480)), Some(120.0), Some(&src)),
+            Some(1440 * 480 * 270 * 4)
+        );
+        // Original width keeps the source size.
+        assert_eq!(
+            gif_single_pass_buffer_bytes(&gif_opts(None), Some(1.0), Some(&src)),
+            Some(12 * 1920 * 1080 * 4)
+        );
+        assert_eq!(
+            gif_single_pass_buffer_bytes(&gif_opts(Some(480)), None, Some(&src)),
+            None
+        );
+        assert_eq!(
+            gif_single_pass_buffer_bytes(&gif_opts(Some(480)), Some(10.0), None),
+            None
+        );
+    }
+
+    #[test]
+    fn gif_single_pass_only_for_small_buffers() {
+        let src = Resolution {
+            width: 1920,
+            height: 1080,
+        };
+        // 10 s at 480 px ≈ 62 MB: single pass.
+        assert!(gif_prefers_single_pass(
+            &gif_opts(Some(480)),
+            Some(10.0),
+            Some(&src)
+        ));
+        // 2 minutes at 480 px ≈ 746 MB: two passes.
+        assert!(!gif_prefers_single_pass(
+            &gif_opts(Some(480)),
+            Some(120.0),
+            Some(&src)
+        ));
+        // 10 s at original 1080p ≈ 1 GB: two passes.
+        assert!(!gif_prefers_single_pass(
+            &gif_opts(None),
+            Some(10.0),
+            Some(&src)
+        ));
+        // Unknown size: take the path with bounded memory.
+        assert!(!gif_prefers_single_pass(&gif_opts(Some(480)), None, None));
+    }
+
+    #[test]
+    fn gif_two_pass_args_share_the_prefilter() {
+        let opts = gif_opts(Some(480));
+        let pass1 = build_gif_palette_args("in.mp4", "pal.png", &opts);
+        let vf = pass1.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            pass1[vf + 1],
+            "fps=12,scale=480:-1:flags=lanczos,palettegen=max_colors=128:stats_mode=diff"
+        );
+        assert_eq!(pass1.last().map(String::as_str), Some("pal.png"));
+        assert!(pass1.contains(&"-progress".to_string()));
+
+        let pass2 = build_gif_paletteuse_args("in.mp4", "pal.png", "out.gif", &opts);
+        assert_eq!(pass2.iter().filter(|a| *a == "-i").count(), 2);
+        let fc = pass2.iter().position(|a| a == "-filter_complex").unwrap();
+        assert_eq!(
+            pass2[fc + 1],
+            "[0:v]fps=12,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3"
+        );
+        assert_eq!(pass2.last().map(String::as_str), Some("out.gif"));
+    }
+
+    #[test]
+    fn resolution_filter_rounds_to_even_in_one_scaler() {
+        let mut opts = default_video_opts();
+        opts.resolution = Some(Resolution {
+            width: 1280,
+            height: 720,
+        });
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        let vf = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf + 1].matches("scale=").count(), 1);
+        assert!(args[vf + 1].ends_with("force_divisible_by=2"));
     }
 
     #[test]

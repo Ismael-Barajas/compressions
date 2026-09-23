@@ -235,6 +235,15 @@ pub struct CompressionResult {
     pub error: Option<String>,
 }
 
+/// One finished thumbnail, streamed as soon as it is ready. `thumbnail_path` is
+/// `None` when no thumbnail could be made (unsupported type or decode failure).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbnailEvent {
+    pub path: String,
+    pub thumbnail_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeEvent {
@@ -271,6 +280,10 @@ pub struct BatchEntry {
     /// backend skips its own ffprobe call before encoding.
     #[serde(default)]
     pub duration: Option<f64>,
+    /// Source dimensions as probed when the file was added. GIF conversion uses them
+    /// (with `duration`) to bound how much memory a single-pass encode would need.
+    #[serde(default)]
+    pub resolution: Option<Resolution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

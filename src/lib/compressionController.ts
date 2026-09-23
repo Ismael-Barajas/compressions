@@ -28,31 +28,11 @@ import {
   templateStamp,
 } from "./fileUtils";
 import { sortQueuedFilesForCompression } from "./scheduling";
-import type { CompressionResult, ProgressEvent, QueuedFile } from "../types/compression";
+import type { CompressionResult, MediaType, ProgressEvent, QueuedFile } from "../types/compression";
 
 const store = useCompressionStore;
 
-// Resolves once the store's isPaused flips back to false OR a cancel is requested.
-// Uses zustand subscribe (no polling) and immediately re-checks state to close the
-// race window between the caller reading state and us subscribing.
-function waitWhilePaused(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const check = () => {
-      const s = store.getState();
-      return !s.isPaused || s._cancelRequested;
-    };
-    if (check()) {
-      resolve();
-      return;
-    }
-    const unsub = store.subscribe((state) => {
-      if (!state.isPaused || state._cancelRequested) {
-        unsub();
-        resolve();
-      }
-    });
-  });
-}
+const MEDIA_TYPES: MediaType[] = ["video", "image", "pdf", "audio"];
 
 /** Progress channel that routes backend events to the store for a known batch. */
 export function createProgressChannel(files: QueuedFile[]): Channel<ProgressEvent> {
@@ -149,11 +129,124 @@ function entriesFor(
       stamp,
     ),
     duration: f.duration ?? null,
+    resolution: f.resolution ?? null,
   }));
 }
 
 function queueKey(queued: QueuedFile[]): string {
   return queued.map((f) => f.id).join(" ");
+}
+
+/** True if any of `submitted` has reached a terminal state (or was removed). */
+function madeProgress(submitted: QueuedFile[]): boolean {
+  const current = new Map(store.getState().files.map((f) => [f.id, f.status]));
+  return submitted.some((f) => {
+    const status = current.get(f.id);
+    return status === undefined || status === "complete" || status === "error";
+  });
+}
+
+/** The compress-tab batch for one media type, using the options current at call time. */
+function compressBatchFor(type: MediaType, files: QueuedFile[]): BatchRun {
+  const { videoOptions, imageOptions, pdfOptions, audioCompressionOptions } = store.getState();
+  switch (type) {
+    case "video":
+      return {
+        files,
+        entries: entriesFor(files, () => undefined),
+        invoke: (entries, ch) => compressVideosBatch(entries, videoOptions, ch),
+      };
+    case "image":
+      return {
+        files,
+        entries: entriesFor(files, (f) => resolveImageOutputFormat(imageOptions.format, f.path)),
+        invoke: (entries, ch) => compressImagesBatch(entries, imageOptions, ch),
+      };
+    case "pdf":
+      return {
+        files,
+        entries: entriesFor(files, () => "pdf"),
+        invoke: (entries, ch) => compressPdfsBatch(entries, pdfOptions, ch),
+      };
+    case "audio":
+      return {
+        files,
+        entries: entriesFor(files, (f) =>
+          resolveAudioCompressionExtension(audioCompressionOptions.format, f.path),
+        ),
+        invoke: (entries, ch) => compressAudioBatch(entries, audioCompressionOptions, ch),
+      };
+  }
+}
+
+/**
+ * Keep at most one batch per media type in flight until the queue is empty. Each
+ * media type is refilled as soon as *its own* batch returns, and files added
+ * mid-run start right away if their type is idle, so they never wait on a slower
+ * type (e.g. photos dropped in during a long video encode).
+ *
+ * Resolves once nothing is in flight and nothing more can start: the queue is
+ * drained or stalled, or Cancel All was requested. While paused, in-flight batches
+ * finish but nothing new starts until Resume.
+ */
+function drainQueue(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const running = new Set<MediaType>();
+    const lastSubmitted = new Map<MediaType, string>();
+    let finished = false;
+    let unsubscribe = () => {};
+
+    const pump = () => {
+      if (finished) return;
+      const state = store.getState();
+
+      if (!state._cancelRequested && !state.isPaused) {
+        const queued = state.files.filter((f) => f.status === "queued");
+        for (const type of MEDIA_TYPES) {
+          if (running.has(type)) continue;
+          const files = sortQueuedFilesForCompression(queued, type);
+          if (files.length === 0) continue;
+
+          // Guard against a backend that returns without moving any file to a
+          // terminal state: re-submitting the identical queue would spin forever.
+          // Cleared whenever a batch makes progress, so a retried file can rerun.
+          const key = queueKey(files);
+          if (key === lastSubmitted.get(type)) {
+            console.warn(`The ${type} queue did not advance; not resubmitting it`);
+            continue;
+          }
+          lastSubmitted.set(type, key);
+
+          running.add(type);
+          void runBatch(compressBatchFor(type, files)).finally(() => {
+            running.delete(type);
+            if (madeProgress(files)) lastSubmitted.delete(type);
+            pump();
+          });
+        }
+      }
+
+      if (running.size === 0 && (state._cancelRequested || !state.isPaused)) {
+        finished = true;
+        unsubscribe();
+        resolve();
+      }
+    };
+
+    // Files added or retried, pause/resume, and Cancel All can all change what
+    // should run next.
+    unsubscribe = store.subscribe((state, prev) => {
+      if (
+        state.filesRevision !== prev.filesRevision ||
+        state.summary.queued > prev.summary.queued ||
+        state.isPaused !== prev.isPaused ||
+        state._cancelRequested !== prev._cancelRequested
+      ) {
+        pump();
+      }
+    });
+    pump();
+  });
 }
 
 export async function startCompression(): Promise<void> {
@@ -173,70 +266,8 @@ export async function startCompression(): Promise<void> {
   }
 
   store.getState().startOperation();
-  let previousQueue = "";
-
   try {
-    // Drain-loop: keep processing until no queued files remain.
-    // Files added by the user during compression are picked up in the next iteration.
-    while (true) {
-      // Bail-out point honored every iteration. cancelAll() sets _cancelRequested
-      // *and* kills child processes, so by the time we re-enter here the in-flight
-      // batches will have errored out and the store state has been reset.
-      if (store.getState()._cancelRequested) break;
-
-      // Soft pause: park the drain until the user resumes (or cancels).
-      if (store.getState().isPaused) {
-        await waitWhilePaused();
-        if (store.getState()._cancelRequested) break;
-      }
-
-      const { files, videoOptions, imageOptions, pdfOptions, audioCompressionOptions } =
-        store.getState();
-
-      const queued = files.filter((f) => f.status === "queued");
-      if (queued.length === 0) break;
-
-      // Guard against a backend that returns without moving any file to a terminal
-      // state: re-submitting the identical queue would spin forever.
-      const key = queueKey(queued);
-      if (key === previousQueue) {
-        console.warn("Queue did not advance; stopping drain loop");
-        break;
-      }
-      previousQueue = key;
-
-      const videoFiles = sortQueuedFilesForCompression(queued, "video");
-      const imageFiles = sortQueuedFilesForCompression(queued, "image");
-      const pdfFiles = sortQueuedFilesForCompression(queued, "pdf");
-      const audioFiles = sortQueuedFilesForCompression(queued, "audio");
-
-      await Promise.allSettled([
-        runBatch({
-          files: videoFiles,
-          entries: entriesFor(videoFiles, () => undefined),
-          invoke: (entries, ch) => compressVideosBatch(entries, videoOptions, ch),
-        }),
-        runBatch({
-          files: imageFiles,
-          entries: entriesFor(imageFiles, (f) =>
-            resolveImageOutputFormat(imageOptions.format, f.path),
-          ),
-          invoke: (entries, ch) => compressImagesBatch(entries, imageOptions, ch),
-        }),
-        runBatch({
-          files: pdfFiles,
-          entries: entriesFor(pdfFiles, () => "pdf"),
-          invoke: (entries, ch) => compressPdfsBatch(entries, pdfOptions, ch),
-        }),
-        runBatch({
-          files: audioFiles,
-          entries: entriesFor(audioFiles, (f) =>
-            resolveAudioCompressionExtension(audioCompressionOptions.format, f.path),
-          ),
-          invoke: (entries, ch) => compressAudioBatch(entries, audioCompressionOptions, ch),
-        }),
-      ]);
-    }
+    await drainQueue();
   } finally {
     store.getState().endOperation();
   }
@@ -304,7 +335,7 @@ export async function extractAudioFromFile(file: QueuedFile): Promise<void> {
 export async function convertToGif(file: QueuedFile): Promise<void> {
   const { gifOptions } = store.getState();
   await runSingleTool(file, "gif", (output, ch) =>
-    convertVideoToGif(file.path, output, gifOptions, ch, file.duration),
+    convertVideoToGif(file.path, output, gifOptions, ch, file.duration, file.resolution),
   );
 }
 
