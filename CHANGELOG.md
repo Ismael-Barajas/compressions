@@ -7,7 +7,7 @@ All notable changes to Compressions are documented here.
 ### Performance
 
 - **Native FFmpeg on Apple Silicon**: the macOS builds shipped an Intel-only FFmpeg and ffprobe, so every video, audio, and GIF job on an M-series Mac ran under Rosetta. Each macOS build now bundles FFmpeg for its own architecture, and the release checks every sidecar's architecture and required encoders before building
-- **Smaller macOS download**: Ghostscript ships only the slice for the build's architecture (about 30 MB less)
+- **Smaller macOS app**: Ghostscript ships only the slice for the build's architecture, and the native FFmpeg builds are smaller too. Bundled tools on Apple Silicon went from 222 MB to 161 MB
 - **Files added mid-run start right away**: each media type picks up new files as soon as its own batch finishes, so photos dropped in during a long video encode no longer wait for the video
 - **GIF conversion memory is bounded**: short clips still convert in one pass; longer or larger ones use two passes instead of buffering every frame (a 2-minute 1080p clip at original width peaked at 11.6 GB, now about 150 MB)
 - **AVIF with metadata kept is about 6× faster** (libaom now runs at `cpu-used` 6 with row threading and a per-job thread budget)
