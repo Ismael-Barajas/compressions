@@ -1,6 +1,6 @@
 [package]
 name = "compressions"
-version = "1.2.0"
+version = "1.2.1"
 description = "A cross-platform video and image compression tool"
 authors = []
 edition = "2021"
@@ -22,6 +22,9 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 mozjpeg = "0.10"
+# Thumbnails: DCT-scaled JPEG decode (1/2..1/8 size) with errors as `Result`s. mozjpeg
+# can scale too, but reports corrupt input by unwinding, which aborts under panic = "abort".
+jpeg-decoder = "0.3"
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
 webp = "0.3"
 ravif = "0.11"

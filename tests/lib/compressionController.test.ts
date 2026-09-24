@@ -138,7 +138,9 @@ describe("startCompression", () => {
     expect(commands.compressAudioBatch).toHaveBeenCalledTimes(1);
 
     const videoEntries: BatchEntry[] = commands.compressVideosBatch.mock.calls[0][0];
-    expect(videoEntries).toEqual([{ input: v.path, output: "/in/f1_compressed.mp4", duration: 12.5 }]);
+    expect(videoEntries).toEqual([
+      { input: v.path, output: "/in/f1_compressed.mp4", duration: 12.5, resolution: null },
+    ]);
     const audioEntries: BatchEntry[] = commands.compressAudioBatch.mock.calls[0][0];
     expect(audioEntries[0].duration).toBe(30);
     expect(audioEntries[0].output).toBe("/in/song_compressed.mp3");
@@ -174,6 +176,94 @@ describe("startCompression", () => {
     await controller.startCompression();
 
     expect(commands.compressVideosBatch).toHaveBeenCalledTimes(2);
+    expect(store().files.map((f) => f.status)).toEqual(["complete", "complete"]);
+  });
+
+  it("starts files of an idle media type without waiting for another type's batch", async () => {
+    const video = makeFile();
+    store().addFiles([video]);
+    let finishVideo: () => void = () => {};
+    commands.compressVideosBatch.mockImplementation(
+      (entries: BatchEntry[], opts: unknown, ch: FakeChannel<ProgressEvent>) =>
+        new Promise((resolve) => {
+          finishVideo = () => resolve(backendThatCompletes()(entries, opts, ch));
+        }),
+    );
+
+    const run = controller.startCompression();
+    await Promise.resolve();
+    const photo = makeFile({ mediaType: "image", path: "/in/late.png" });
+    store().addFiles([photo]);
+    await vi.waitFor(() => expect(commands.compressImagesBatch).toHaveBeenCalledTimes(1));
+
+    // The photo finished while the video is still encoding.
+    expect(store().files.find((f) => f.id === photo.id)?.status).toBe("complete");
+    expect(store().files.find((f) => f.id === video.id)?.status).not.toBe("complete");
+
+    finishVideo();
+    await run;
+    expect(store().files.map((f) => f.status)).toEqual(["complete", "complete"]);
+    expect(store().isCompressing).toBe(false);
+  });
+
+  it("reruns a retried file while another media type is still running", async () => {
+    store().addFiles([makeFile()]);
+    const photo = makeFile({ mediaType: "image", path: "/in/retry.png" });
+    store().addFiles([photo]);
+    let finishVideo: () => void = () => {};
+    commands.compressVideosBatch.mockImplementation(
+      (entries: BatchEntry[], opts: unknown, ch: FakeChannel<ProgressEvent>) =>
+        new Promise((resolve) => {
+          finishVideo = () => resolve(backendThatCompletes()(entries, opts, ch));
+        }),
+    );
+    let imageCall = 0;
+    commands.compressImagesBatch.mockImplementation(
+      async (entries: BatchEntry[], opts: unknown, ch: FakeChannel<ProgressEvent>) => {
+        imageCall += 1;
+        if (imageCall === 1) {
+          return entries.map((e) => ({ ...okResult(e, "j"), success: false, error: "boom" }));
+        }
+        return backendThatCompletes()(entries, opts, ch);
+      },
+    );
+
+    const run = controller.startCompression();
+    await vi.waitFor(() =>
+      expect(store().files.find((f) => f.id === photo.id)?.status).toBe("error"),
+    );
+    store().retryFile(photo.id);
+    await vi.waitFor(() => expect(commands.compressImagesBatch).toHaveBeenCalledTimes(2));
+    expect(store().files.find((f) => f.id === photo.id)?.status).toBe("complete");
+
+    finishVideo();
+    await run;
+    expect(store().files.map((f) => f.status)).toEqual(["complete", "complete"]);
+  });
+
+  it("starts nothing new while paused and resumes on Resume", async () => {
+    store().addFiles([makeFile()]);
+    let finishVideo: () => void = () => {};
+    commands.compressVideosBatch.mockImplementation(
+      (entries: BatchEntry[], opts: unknown, ch: FakeChannel<ProgressEvent>) =>
+        new Promise((resolve) => {
+          finishVideo = () => resolve(backendThatCompletes()(entries, opts, ch));
+        }),
+    );
+
+    const run = controller.startCompression();
+    await Promise.resolve();
+    controller.pauseCompression();
+    store().addFiles([makeFile({ mediaType: "image", path: "/in/paused.png" })]);
+    finishVideo();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(commands.compressImagesBatch).not.toHaveBeenCalled();
+    expect(store().isCompressing).toBe(true);
+
+    controller.resumeCompression();
+    await run;
+    expect(commands.compressImagesBatch).toHaveBeenCalledTimes(1);
     expect(store().files.map((f) => f.status)).toEqual(["complete", "complete"]);
   });
 

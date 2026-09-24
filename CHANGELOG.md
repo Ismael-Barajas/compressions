@@ -2,6 +2,26 @@
 
 All notable changes to Compressions are documented here.
 
+## [1.2.1] — 2026-09-24
+
+### Performance
+
+- **Native FFmpeg on Apple Silicon**: the macOS builds shipped an Intel-only FFmpeg and ffprobe, so every video, audio, and GIF job on an M-series Mac ran under Rosetta. Each macOS build now bundles FFmpeg for its own architecture, and the release checks every sidecar's architecture and required encoders before building
+- **Smaller macOS app**: Ghostscript ships only the slice for the build's architecture, and the native FFmpeg builds are smaller too. Bundled tools on Apple Silicon went from 222 MB to 161 MB
+- **Files added mid-run start right away**: each media type picks up new files as soon as its own batch finishes, so photos dropped in during a long video encode no longer wait for the video
+- **GIF conversion memory is bounded**: short clips still convert in one pass; longer or larger ones use two passes instead of buffering every frame (a 2-minute 1080p clip at original width peaked at 11.6 GB, now about 150 MB)
+- **AVIF with metadata kept is about 6× faster** (libaom now runs at `cpu-used` 6 with row threading and a per-job thread budget)
+- **Faster thumbnails**: JPEGs decode at reduced size (about 1.8× faster, far less memory), HEIC thumbnails use a QOI intermediate instead of PNG (about 4× faster), and thumbnails appear one by one instead of waiting for the slowest in the request
+- PNG encoding no longer copies the full pixel buffer; HW encoder checks at startup run concurrently; all file probes share one concurrency limit; video resizing rounds to even dimensions in a single scaler
+
+### Bug Fixes
+
+- **Audio compression and cover art**: embedded album art is kept as-is (MP3, FLAC, M4A) or dropped (Opus, WAV) instead of being re-encoded. Previously M4A files with cover art failed to compress, MP3/FLAC outputs were often larger than the input (so nothing was saved), and Opus outputs gained a video track
+- **AV1 on macOS**: the bundled FFmpeg had no SVT-AV1 encoder, so AV1 compression failed on every Mac
+- **AVIF with metadata kept ignored the resize setting**
+- An AVIF/HEIC file that failed to decode left its row spinning forever; it is now marked failed
+- Audio files no longer show their cover art's dimensions as a resolution
+
 ## [1.2.0] — 2026-09-07
 
 ### New App Icon

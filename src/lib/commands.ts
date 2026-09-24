@@ -9,16 +9,20 @@ import type {
   CompressionResult,
   ProgressEvent,
   ProbeEvent,
+  ThumbnailEvent,
+  Resolution,
   HistoryEntry,
   LogEntry,
   SupportedMedia,
 } from "../types/compression";
 
-/** One file in a batch. `duration` (seconds) lets the backend skip re-probing. */
+/** One file in a batch. `duration` (seconds) lets the backend skip re-probing;
+ * `resolution` lets GIF conversion bound its memory use. */
 export interface BatchEntry {
   input: string;
   output: string;
   duration?: number | null;
+  resolution?: Resolution | null;
 }
 
 export async function compressVideosBatch(
@@ -102,8 +106,16 @@ export async function convertVideoToGif(
   options: GifConversionOptions,
   onProgress: Channel<ProgressEvent>,
   duration?: number | null,
+  resolution?: Resolution | null,
 ): Promise<CompressionResult> {
-  return invoke("convert_video_to_gif", { input, output, options, duration: duration ?? null, onProgress });
+  return invoke("convert_video_to_gif", {
+    input,
+    output,
+    options,
+    duration: duration ?? null,
+    resolution: resolution ?? null,
+    onProgress,
+  });
 }
 
 export async function convertVideosToGifBatch(
@@ -150,8 +162,14 @@ export async function clearLogs(): Promise<void> {
   return invoke("clear_logs");
 }
 
-export async function generateThumbnailsBatch(paths: string[]): Promise<[string, string | null][]> {
-  return invoke("generate_thumbnails_batch", { paths });
+/** Generate thumbnails; each result is delivered to `onResult` as soon as it is ready. */
+export async function generateThumbnailsBatch(
+  paths: string[],
+  onResult: (event: ThumbnailEvent) => void,
+): Promise<void> {
+  const channel = new Channel<ThumbnailEvent>();
+  channel.onmessage = onResult;
+  return invoke("generate_thumbnails_batch", { paths, onResult: channel });
 }
 
 export async function clearThumbnailCache(): Promise<void> {

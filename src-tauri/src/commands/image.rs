@@ -1,20 +1,17 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Instant;
 
-use tauri::{ipc::Channel, AppHandle, Manager};
+use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use tokio::sync::Semaphore;
 use uuid::Uuid;
 
-use crate::commands::job::keep_original_if_larger;
+use crate::commands::job::{keep_original_if_larger, run_batch};
 use crate::compression::image as img_compress;
 use crate::history::storage as history;
-use crate::state::CancelFlag;
 use crate::types::{
     BatchEntry, CompressionResult, HistoryEntry, ImageFormat, ImageOptions, ProgressEvent,
+    ResizeMode, Resolution,
 };
 use crate::utils::OutputClaim;
 
@@ -159,40 +156,48 @@ pub async fn compress_image(
     let mut resolved_options = options.clone();
     resolved_options.format = effective_format.clone();
 
-    // If input is AVIF or HEIC, decode via FFmpeg to a temp QOI first (image crate can't decode these)
-    let decode_temp = if is_avif_input(&input) {
-        Some(decode_avif_via_ffmpeg(&app, &input).await?)
-    } else if is_heic_input(&input) {
-        Some(decode_heic_via_ffmpeg(&app, &input).await?)
-    } else {
-        None
-    };
-    let effective_input = decode_temp.as_deref().unwrap_or(&input);
-
-    // AVIF with metadata preservation routes through FFmpeg sidecar
+    // AVIF with metadata preservation routes through FFmpeg sidecar, which reads the
+    // original input itself.
     let needs_ffmpeg_avif =
         matches!(effective_format, ImageFormat::Avif) && !resolved_options.strip_metadata;
 
-    let compression_result = if needs_ffmpeg_avif {
-        // For AVIF output with metadata, use original input (FFmpeg handles the full pipeline)
-        compress_avif_with_ffmpeg(&app, &input, &output, resolved_options.quality).await
+    // The image crate can't decode AVIF/HEIC: the native path decodes those via FFmpeg
+    // to a temp QOI first. Failures from here on are reported as a failed job (with an
+    // Error event), never as an early `?` return: `Started` has already been sent.
+    let decode_temp = if needs_ffmpeg_avif {
+        Ok(None)
+    } else if is_avif_input(&input) {
+        decode_avif_via_ffmpeg(&app, &input).await.map(Some)
+    } else if is_heic_input(&input) {
+        decode_heic_via_ffmpeg(&app, &input).await.map(Some)
     } else {
-        let input_for_compress = effective_input.to_string();
-        let output_clone = output.clone();
-        tokio::task::spawn_blocking(move || {
-            img_compress::compress_with_threads(
-                &input_for_compress,
-                &output_clone,
-                &resolved_options,
-                encoder_threads,
-            )
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        Ok(None)
+    };
+
+    let compression_result = match &decode_temp {
+        Err(e) => Err(e.clone()),
+        Ok(_) if needs_ffmpeg_avif => {
+            compress_avif_with_ffmpeg(&app, &input, &output, &resolved_options, encoder_threads)
+                .await
+        }
+        Ok(temp) => {
+            let input_for_compress = temp.clone().unwrap_or_else(|| input.clone());
+            let output_clone = output.clone();
+            tokio::task::spawn_blocking(move || {
+                img_compress::compress_with_threads(
+                    &input_for_compress,
+                    &output_clone,
+                    &resolved_options,
+                    encoder_threads,
+                )
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("Task join error: {}", e)))
+        }
     };
 
     // Clean up decode temp file (AVIF or HEIC)
-    if let Some(ref temp) = decode_temp {
+    if let Ok(Some(ref temp)) = decode_temp {
         let _ = tokio::fs::remove_file(temp).await;
     }
 
@@ -255,29 +260,69 @@ pub async fn compress_image(
     }
 }
 
-async fn compress_avif_with_ffmpeg(
-    app: &AppHandle,
+/// libaom's default `cpu-used` (1) is its slowest preset. Measured on a 3 MP image:
+/// 63.7 s at the default vs 10.9 s at 6, with the same output size.
+const FFMPEG_AVIF_CPU_USED: &str = "6";
+
+/// FFmpeg scale filter matching the native pipeline's resize (`target_dimensions`):
+/// `Fit` preserves aspect ratio and treats a zero dimension as unconstrained,
+/// `Exact` stretches.
+fn ffmpeg_resize_filter(resize: Option<&Resolution>, mode: &ResizeMode) -> Option<String> {
+    let r = resize?;
+    let scale = match mode {
+        ResizeMode::Exact => format!("scale={}:{}", r.width.max(1), r.height.max(1)),
+        ResizeMode::Fit => match (r.width, r.height) {
+            (0, 0) => return None,
+            (w, 0) => format!("scale={}:-1", w),
+            (0, h) => format!("scale=-1:{}", h),
+            (w, h) => format!("scale={}:{}:force_original_aspect_ratio=decrease", w, h),
+        },
+    };
+    Some(format!("{}:flags=lanczos", scale))
+}
+
+fn build_ffmpeg_avif_args(
     input: &str,
     output: &str,
-    quality: u8,
-) -> Result<(), String> {
+    options: &ImageOptions,
+    threads: usize,
+) -> Vec<String> {
     // Map quality 0-100 to CRF 63-0 (FFmpeg libaom-av1: lower CRF = higher quality)
-    let crf = ((100 - quality) as f32 * 63.0 / 100.0) as u8;
+    let crf = ((100 - options.quality.min(100)) as f32 * 63.0 / 100.0) as u8;
 
-    let args: Vec<String> = vec![
-        "-y".into(),
-        "-i".into(),
-        input.into(),
+    let mut args: Vec<String> = vec!["-y".into(), "-i".into(), input.into()];
+    if let Some(filter) = ffmpeg_resize_filter(options.resize.as_ref(), &options.resize_mode) {
+        args.push("-vf".into());
+        args.push(filter);
+    }
+    args.extend([
         "-c:v".into(),
         "libaom-av1".into(),
         "-crf".into(),
         crf.to_string(),
+        "-cpu-used".into(),
+        FFMPEG_AVIF_CPU_USED.into(),
+        "-row-mt".into(),
+        "1".into(),
+        "-threads".into(),
+        threads.max(1).to_string(),
         "-still-picture".into(),
         "1".into(),
         "-map_metadata".into(),
         "0".into(),
         output.into(),
-    ];
+    ]);
+    args
+}
+
+async fn compress_avif_with_ffmpeg(
+    app: &AppHandle,
+    input: &str,
+    output: &str,
+    options: &ImageOptions,
+    threads: usize,
+) -> Result<(), String> {
+    let args = build_ffmpeg_avif_args(input, output, options, threads);
 
     let (mut rx, _child) = app
         .shell()
@@ -317,87 +362,23 @@ pub async fn compress_images_batch(
     // Give each in-flight encoder a slice of the machine rather than letting every
     // AVIF/PNG job spin up its own full-size thread pool.
     let encoder_threads = image_encoder_threads(cores, max_concurrent, files.len());
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = Vec::new();
 
-    let cancel_flag = app
-        .try_state::<CancelFlag>()
-        .map(|s| s.0.clone())
-        .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
-
-    for entry in files {
-        if cancel_flag.load(Ordering::SeqCst) {
-            break;
-        }
-        let opts = options.clone();
-        let app_clone = app.clone();
-        let channel_clone = on_progress.clone();
-        let sem = semaphore.clone();
-        let cancel = cancel_flag.clone();
-        let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
-            // Re-check after acquiring the permit — by the time a queued task runs,
-            // the user may have cancelled. Skip cleanly without touching the file.
-            if cancel.load(Ordering::SeqCst) {
-                return Ok(CompressionResult {
-                    job_id: Uuid::new_v4().to_string(),
-                    input_path: entry.input.clone(),
-                    output_path: entry.output.clone(),
-                    input_size: 0,
-                    output_size: 0,
-                    duration_ms: 0,
-                    success: false,
-                    error: Some("Cancelled".to_string()),
-                });
-            }
+    Ok(run_batch(&app, files, max_concurrent, move |app, entry| {
+        let options = options.clone();
+        let on_progress = on_progress.clone();
+        async move {
             compress_image(
-                app_clone,
+                app,
                 entry.input,
                 entry.output,
-                opts,
+                options,
                 encoder_threads,
-                channel_clone,
+                on_progress,
             )
             .await
-        });
-        handles.push(handle);
-    }
-
-    let mut results = Vec::new();
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(result)) => results.push(result),
-            Ok(Err(e)) => {
-                tracing::warn!(error = %e, "Image task failed at IPC level, continuing batch");
-                // Collect the error as a failed result instead of aborting the entire batch
-                results.push(CompressionResult {
-                    job_id: Uuid::new_v4().to_string(),
-                    input_path: String::new(),
-                    output_path: String::new(),
-                    input_size: 0,
-                    output_size: 0,
-                    duration_ms: 0,
-                    success: false,
-                    error: Some(e),
-                });
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Image task join error, continuing batch");
-                results.push(CompressionResult {
-                    job_id: Uuid::new_v4().to_string(),
-                    input_path: String::new(),
-                    output_path: String::new(),
-                    input_size: 0,
-                    output_size: 0,
-                    duration_ms: 0,
-                    success: false,
-                    error: Some(format!("Task join error: {}", e)),
-                });
-            }
         }
-    }
-
-    Ok(results)
+    })
+    .await)
 }
 
 /// Threads per encoder: when the batch is wide enough to keep every worker busy,
@@ -418,6 +399,67 @@ mod tests {
         assert_eq!(image_encoder_threads(16, 8, 100), 2);
         assert_eq!(image_encoder_threads(4, 4, 1), 4);
         assert_eq!(image_encoder_threads(2, 2, 0), 2);
+    }
+
+    fn avif_opts(resize: Option<Resolution>, resize_mode: ResizeMode) -> ImageOptions {
+        ImageOptions {
+            format: ImageFormat::Avif,
+            quality: 80,
+            resize,
+            resize_mode,
+            strip_metadata: false,
+        }
+    }
+
+    #[test]
+    fn ffmpeg_avif_uses_fast_preset_threads_and_keeps_metadata() {
+        let args =
+            build_ffmpeg_avif_args("in.jpg", "out.avif", &avif_opts(None, ResizeMode::Fit), 3);
+        assert!(args.windows(2).any(|p| p == ["-cpu-used", "6"]));
+        assert!(args.windows(2).any(|p| p == ["-row-mt", "1"]));
+        assert!(args.windows(2).any(|p| p == ["-threads", "3"]));
+        assert!(args.windows(2).any(|p| p == ["-map_metadata", "0"]));
+        assert!(args.windows(2).any(|p| p == ["-crf", "12"]));
+        assert!(!args.contains(&"-vf".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("out.avif"));
+    }
+
+    #[test]
+    fn ffmpeg_avif_applies_resize_like_native_pipeline() {
+        let res = |w, h| {
+            Some(Resolution {
+                width: w,
+                height: h,
+            })
+        };
+        let filter = |r, m| ffmpeg_resize_filter(Option::as_ref(&r), &m);
+        assert_eq!(
+            filter(res(800, 600), ResizeMode::Fit).as_deref(),
+            Some("scale=800:600:force_original_aspect_ratio=decrease:flags=lanczos")
+        );
+        assert_eq!(
+            filter(res(800, 0), ResizeMode::Fit).as_deref(),
+            Some("scale=800:-1:flags=lanczos")
+        );
+        assert_eq!(
+            filter(res(0, 600), ResizeMode::Fit).as_deref(),
+            Some("scale=-1:600:flags=lanczos")
+        );
+        assert_eq!(filter(res(0, 0), ResizeMode::Fit), None);
+        assert_eq!(filter(None, ResizeMode::Fit), None);
+        assert_eq!(
+            filter(res(800, 600), ResizeMode::Exact).as_deref(),
+            Some("scale=800:600:flags=lanczos")
+        );
+
+        let args = build_ffmpeg_avif_args(
+            "in.jpg",
+            "out.avif",
+            &avif_opts(res(800, 0), ResizeMode::Fit),
+            1,
+        );
+        let vf = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf + 1], "scale=800:-1:flags=lanczos");
     }
 
     #[test]

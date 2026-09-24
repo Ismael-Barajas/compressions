@@ -2,7 +2,7 @@ use tauri::{ipc::Channel, AppHandle};
 
 use crate::commands::job::{
     finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started,
-    single_threaded_batch_concurrency, SidecarSpec,
+    single_threaded_batch_concurrency, ProgressTarget, SidecarSpec,
 };
 use crate::ffmpeg::args::{build_audio_compression_args, build_audio_extraction_args};
 use crate::types::{
@@ -34,7 +34,7 @@ async fn run_audio_job(
         SidecarSpec {
             sidecar: "ffmpeg",
             args: &args,
-            progress: Some((total_duration, on_progress)),
+            progress: Some(ProgressTarget::full(total_duration, on_progress)),
             capture_stderr: false,
         },
     )

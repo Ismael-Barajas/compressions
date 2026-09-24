@@ -74,24 +74,22 @@ export function FileList() {
 
     if (needThumbnails.size === 0) return;
 
-    generateThumbnailsBatch([...needThumbnails.keys()])
-      .then((results) => {
-        for (const [path, thumbPath] of results) {
-          const id = needThumbnails.get(path);
-          if (!id) continue;
-          inFlightRef.current.delete(id);
-          if (thumbPath) {
-            setThumbnailPath(id, thumbPath);
-          } else {
-            failedRef.current.add(id);
-          }
-        }
-      })
-      .catch(() => {
-        for (const id of needThumbnails.values()) {
-          inFlightRef.current.delete(id);
-        }
-      });
+    // Results stream in one by one, so fast thumbnails show up without waiting for
+    // the slowest item (a video seek or HEIC decode) in the same request.
+    generateThumbnailsBatch([...needThumbnails.keys()], ({ path, thumbnailPath }) => {
+      const id = needThumbnails.get(path);
+      if (!id) return;
+      inFlightRef.current.delete(id);
+      if (thumbnailPath) {
+        setThumbnailPath(id, thumbnailPath);
+      } else {
+        failedRef.current.add(id);
+      }
+    }).catch(() => {
+      for (const id of needThumbnails.values()) {
+        inFlightRef.current.delete(id);
+      }
+    });
   }, [virtualizer, setThumbnailPath]);
 
   // Generate thumbnails when the visible *range* changes (scrolling by whole rows

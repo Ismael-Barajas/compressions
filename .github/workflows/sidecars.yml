@@ -1,0 +1,60 @@
+name: Sidecars
+
+# Downloads the release sidecars (FFmpeg, ffprobe, Ghostscript) and runs the same
+# architecture/encoder guard as the release workflow, so a broken download source
+# is caught on the PR that changes it instead of at release time.
+on:
+  pull_request:
+    paths:
+      - "scripts/download-*"
+      - "scripts/check-sidecars.sh"
+      - ".github/workflows/sidecars.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download FFmpeg
+        run: bash scripts/download-ffmpeg.sh ${{ matrix.target }}
+
+      - name: Download Ghostscript
+        run: bash scripts/download-gs.sh ${{ matrix.target }}
+
+      - name: Verify sidecars
+        run: |
+          ls -la src-tauri/binaries/
+          bash scripts/check-sidecars.sh ${{ matrix.target }}
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install 7-Zip
+        run: choco install 7zip -y
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: .\scripts\download-ffmpeg.ps1
+
+      - name: Download Ghostscript
+        shell: pwsh
+        run: .\scripts\download-gs.ps1
+
+      - name: Verify sidecars
+        shell: bash
+        run: bash scripts/check-sidecars.sh x86_64-pc-windows-msvc

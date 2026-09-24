@@ -84,12 +84,46 @@ pub async fn resolve_duration(app: &AppHandle, path: &str, hint: Option<f64>) ->
     }
 }
 
+/// Where a sidecar's parsed FFmpeg progress goes. A job made of several FFmpeg runs
+/// (two-pass GIF) maps each run onto its own slice of the bar via `from..to`.
+#[derive(Clone, Copy)]
+pub struct ProgressTarget<'a> {
+    pub total_duration: f64,
+    pub channel: &'a Channel<ProgressEvent>,
+    pub from: f32,
+    pub to: f32,
+}
+
+impl<'a> ProgressTarget<'a> {
+    pub fn full(total_duration: f64, channel: &'a Channel<ProgressEvent>) -> Self {
+        Self::range(total_duration, channel, 0.0, 100.0)
+    }
+
+    pub fn range(
+        total_duration: f64,
+        channel: &'a Channel<ProgressEvent>,
+        from: f32,
+        to: f32,
+    ) -> Self {
+        Self {
+            total_duration,
+            channel,
+            from,
+            to,
+        }
+    }
+
+    fn scale(&self, percent: f32) -> f32 {
+        self.from + percent * (self.to - self.from) / 100.0
+    }
+}
+
 pub struct SidecarSpec<'a> {
     pub sidecar: &'static str,
     pub args: &'a [String],
     /// When `Some`, stderr is parsed as FFmpeg `-progress` output and forwarded
-    /// (throttled) on the channel using this total duration.
-    pub progress: Option<(f64, &'a Channel<ProgressEvent>)>,
+    /// (throttled) on the target's channel.
+    pub progress: Option<ProgressTarget<'a>>,
     /// Keep the last few KB of stderr for error reporting (Ghostscript).
     pub capture_stderr: bool,
 }
@@ -120,7 +154,7 @@ pub async fn run_sidecar(
     register_job(app, &ctx.job_id, child, &ctx.output)?;
 
     let start = Instant::now();
-    let mut parser = spec.progress.map(|(total, _)| ProgressParser::new(total));
+    let mut parser = spec.progress.map(|t| ProgressParser::new(t.total_duration));
     let mut throttle = ProgressThrottle::default();
     let mut stderr_tail = String::new();
     let mut exit_code = None;
@@ -130,18 +164,20 @@ pub async fn run_sidecar(
         match event {
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes);
-                if let (Some(parser), Some((_, channel))) = (parser.as_mut(), spec.progress) {
+                if let (Some(parser), Some(target)) = (parser.as_mut(), spec.progress) {
                     if let Some(p) = parser.feed_line(&line) {
                         if throttle.should_send(p.percent) {
-                            let _ = channel.send(ProgressEvent::Progress(ProgressPayload {
-                                job_id: ctx.job_id.clone(),
-                                file_name: ctx.file_name.clone(),
-                                percent: p.percent,
-                                current_frame: p.current_frame,
-                                total_frames: None,
-                                speed: p.speed,
-                                eta_seconds: p.eta_seconds,
-                            }));
+                            let _ = target
+                                .channel
+                                .send(ProgressEvent::Progress(ProgressPayload {
+                                    job_id: ctx.job_id.clone(),
+                                    file_name: ctx.file_name.clone(),
+                                    percent: target.scale(p.percent),
+                                    current_frame: p.current_frame,
+                                    total_frames: None,
+                                    speed: p.speed,
+                                    eta_seconds: p.eta_seconds,
+                                }));
                         }
                     }
                 }

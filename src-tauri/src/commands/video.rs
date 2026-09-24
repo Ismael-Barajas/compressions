@@ -1,7 +1,8 @@
 use tauri::{ipc::Channel, AppHandle, Manager, State};
 
 use crate::commands::job::{
-    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started, SidecarSpec,
+    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started,
+    ProgressTarget, SidecarSpec,
 };
 use crate::ffmpeg::args::build_video_args;
 use crate::state::{AppState, HwEncoders};
@@ -86,7 +87,7 @@ pub async fn compress_video_inner(
         SidecarSpec {
             sidecar: "ffmpeg",
             args: &args,
-            progress: Some((total_duration, on_progress)),
+            progress: Some(ProgressTarget::full(total_duration, on_progress)),
             capture_stderr: false,
         },
     )
@@ -112,7 +113,7 @@ pub async fn compress_video_inner(
             SidecarSpec {
                 sidecar: "ffmpeg",
                 args: &sw_args,
-                progress: Some((total_duration, on_progress)),
+                progress: Some(ProgressTarget::full(total_duration, on_progress)),
                 capture_stderr: false,
             },
         )

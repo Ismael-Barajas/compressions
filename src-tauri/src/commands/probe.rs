@@ -1,10 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{ipc::Channel, AppHandle};
+use tauri::{ipc::Channel, AppHandle, State};
 
 use crate::ffmpeg::probe::probe_video_info;
 use crate::media::{extension_of, media_type_for_path};
+use crate::state::ProbeSemaphore;
 use crate::types::{MediaType, ProbeEvent};
 
 pub fn detect_media_type(path: &str) -> Result<MediaType, String> {
@@ -16,10 +17,11 @@ pub fn detect_media_type(path: &str) -> Result<MediaType, String> {
 #[tauri::command]
 pub async fn probe_files_batch(
     app: AppHandle,
+    state: State<'_, ProbeSemaphore>,
     paths: Vec<String>,
     on_result: Channel<ProbeEvent>,
 ) -> Result<(), String> {
-    let sem = Arc::new(tokio::sync::Semaphore::new(6));
+    let sem = Arc::clone(&state.0);
     let mut set = tokio::task::JoinSet::new();
 
     for path in paths {
@@ -39,12 +41,18 @@ pub async fn probe_files_batch(
             let media_type = detect_media_type(&path).ok();
 
             let (resolution, duration) = match media_type {
-                Some(MediaType::Video) | Some(MediaType::Audio) => {
+                Some(MediaType::Video) => {
                     let info = probe_video_info(&app, &path).await.ok();
                     (
                         info.as_ref().and_then(|i| i.resolution.clone()),
                         info.as_ref().and_then(|i| i.duration),
                     )
+                }
+                // An audio file's only "video" stream is its cover art; its size is
+                // not the file's resolution.
+                Some(MediaType::Audio) => {
+                    let info = probe_video_info(&app, &path).await.ok();
+                    (None, info.and_then(|i| i.duration))
                 }
                 Some(MediaType::Image) => {
                     let ext = extension_of(Path::new(&path));
