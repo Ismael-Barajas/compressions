@@ -9,16 +9,18 @@ use std::path::{Path, PathBuf};
 /// poisoned mutex, panic), the orphan zero-byte marker is cleaned up automatically.
 ///
 /// The 0-byte check makes this safe to use without an explicit "commit" call —
-/// real output bytes are never destroyed by Drop.
+/// real output bytes are never destroyed by Drop. The claim always created the
+/// marker itself (`claim` fails rather than returning an unclaimed path), so Drop
+/// never touches a pre-existing file.
 pub struct OutputClaim {
     path: String,
 }
 
 impl OutputClaim {
-    pub fn claim(target: &str) -> Self {
-        Self {
-            path: resolve_output_conflict(target),
-        }
+    pub fn claim(target: &str) -> Result<Self, String> {
+        Ok(Self {
+            path: resolve_output_conflict(target)?,
+        })
     }
 
     pub fn path(&self) -> &str {
@@ -36,15 +38,21 @@ impl Drop for OutputClaim {
     }
 }
 
+const MAX_CONFLICT_SUFFIX: u32 = 999;
+
 /// If `output` already exists, append `_2`, `_3`, etc. before the extension
 /// until a free path is found. Atomically claims the path by creating a
 /// zero-byte marker file, preventing TOCTOU races during parallel compression.
-pub fn resolve_output_conflict(output: &str) -> String {
+///
+/// Fails once `_999` is taken instead of falling back to the original path: an
+/// unclaimed path would be overwritten by the encoder (`ffmpeg -y`) and, if it were
+/// the source file, deleted on failure.
+pub fn resolve_output_conflict(output: &str) -> Result<String, String> {
     let path = Path::new(output);
 
     // Try to atomically claim the original path first
     if try_claim_path(path) {
-        return output.to_string();
+        return Ok(output.to_string());
     }
 
     let stem = path
@@ -54,19 +62,21 @@ pub fn resolve_output_conflict(output: &str) -> String {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let parent = path.parent().unwrap_or(Path::new("."));
 
-    for i in 2..=999 {
+    for i in 2..=MAX_CONFLICT_SUFFIX {
         let candidate: PathBuf = if ext.is_empty() {
             parent.join(format!("{}_{}", stem, i))
         } else {
             parent.join(format!("{}_{}.{}", stem, i, ext))
         };
         if try_claim_path(&candidate) {
-            return candidate.to_string_lossy().to_string();
+            return Ok(candidate.to_string_lossy().to_string());
         }
     }
 
-    // Fallback: just return the original (will overwrite)
-    output.to_string()
+    Err(format!(
+        "Could not find a free output name for {} (tried {} variants)",
+        output, MAX_CONFLICT_SUFFIX
+    ))
 }
 
 /// Attempt to atomically create a zero-byte file at `path`.
@@ -87,7 +97,7 @@ mod tests {
     fn no_conflict_returns_original() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.jpg");
-        let result = resolve_output_conflict(path.to_str().unwrap());
+        let result = resolve_output_conflict(path.to_str().unwrap()).unwrap();
         assert_eq!(result, path.to_str().unwrap());
     }
 
@@ -97,7 +107,7 @@ mod tests {
         let path = dir.path().join("test.jpg");
         std::fs::write(&path, b"data").unwrap();
 
-        let result = resolve_output_conflict(path.to_str().unwrap());
+        let result = resolve_output_conflict(path.to_str().unwrap()).unwrap();
         assert!(result.ends_with("test_2.jpg"));
     }
 
@@ -108,7 +118,7 @@ mod tests {
         std::fs::write(&path, b"data").unwrap();
         std::fs::write(dir.path().join("test_2.jpg"), b"data").unwrap();
 
-        let result = resolve_output_conflict(path.to_str().unwrap());
+        let result = resolve_output_conflict(path.to_str().unwrap()).unwrap();
         assert!(result.ends_with("test_3.jpg"));
     }
 
@@ -119,13 +129,29 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         // Simulate two parallel calls for the same output path
-        let result1 = resolve_output_conflict(path_str);
-        let result2 = resolve_output_conflict(path_str);
+        let result1 = resolve_output_conflict(path_str).unwrap();
+        let result2 = resolve_output_conflict(path_str).unwrap();
 
         // Both should succeed with different paths (atomic claim prevents collision)
         assert_ne!(result1, result2);
         assert_eq!(result1, path_str);
         assert!(result2.ends_with("photo_2.jpg"));
+    }
+
+    #[test]
+    fn exhausted_suffixes_fail_instead_of_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        std::fs::write(&path, b"source bytes").unwrap();
+        for i in 2..=MAX_CONFLICT_SUFFIX {
+            std::fs::write(dir.path().join(format!("photo_{}.jpg", i)), b"x").unwrap();
+        }
+
+        let result = resolve_output_conflict(path.to_str().unwrap());
+
+        assert!(result.is_err());
+        // The original (which could be the source) is untouched.
+        assert_eq!(std::fs::read(&path).unwrap(), b"source bytes");
     }
 
     #[test]
@@ -135,7 +161,7 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         {
-            let claim = OutputClaim::claim(path_str);
+            let claim = OutputClaim::claim(path_str).unwrap();
             assert!(Path::new(claim.path()).exists());
         }
         // After drop, 0-byte marker should be cleaned up
@@ -149,7 +175,7 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         {
-            let claim = OutputClaim::claim(path_str);
+            let claim = OutputClaim::claim(path_str).unwrap();
             // Simulate the encoder writing real bytes to the claimed path
             std::fs::write(claim.path(), b"compressed image data").unwrap();
         }

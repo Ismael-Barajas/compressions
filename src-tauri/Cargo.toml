@@ -26,6 +26,8 @@ mozjpeg = "0.10"
 # can scale too, but reports corrupt input by unwinding, which aborts under panic = "abort".
 jpeg-decoder = "0.3"
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# Already pulled in by oxipng; used directly to scope its thread pool per job.
+rayon = "1"
 webp = "0.3"
 ravif = "0.11"
 rgb = "0.8"

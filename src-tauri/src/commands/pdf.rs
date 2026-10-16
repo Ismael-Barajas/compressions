@@ -62,6 +62,9 @@ fn build_gs_args(
     }
 
     args.extend([
+        // SAFER is the default since Ghostscript 9.50 (we bundle 10.x); stated
+        // explicitly so untrusted PDFs can never reach the filesystem or shell.
+        "-dSAFER".to_string(),
         "-sDEVICE=pdfwrite".to_string(),
         "-dCompatibilityLevel=1.4".to_string(),
         format!("-dPDFSETTINGS=/{}", preset),
@@ -76,10 +79,25 @@ fn build_gs_args(
         args.push(format!("-dMonoImageResolution={}", dpi));
     }
 
-    args.push(format!("-sOutputFile={}", output));
+    // `-o <file>` as two argv entries: the path is never spliced into a switch.
+    args.push("-o".to_string());
+    args.push(output.to_string());
     args.push(input.to_string());
 
     args
+}
+
+/// Ghostscript interprets `%` in the output file name as a printf-style page
+/// pattern (`%d`) or a device prefix (`%pipe%`, `%stdout%`), so such a path cannot
+/// be passed through safely.
+fn validate_gs_output_path(output: &str) -> Result<(), String> {
+    if output.contains('%') || output.contains('|') || output.chars().any(char::is_control) {
+        return Err(format!(
+            "Output path contains characters Ghostscript cannot accept ('%', '|' or control characters): {}",
+            output
+        ));
+    }
+    Ok(())
 }
 
 pub async fn compress_pdf_inner(
@@ -92,6 +110,7 @@ pub async fn compress_pdf_inner(
     validate_pdf_options(&options)?;
     tracing::info!(input = %input, quality = ?options.quality, "Starting PDF compression");
 
+    validate_gs_output_path(&output)?;
     let ctx = prepare_job(&input, &output, "pdf").await?;
     let gs_res_dir = resolve_gs_resource_dir(app);
     let args = build_gs_args(&ctx.input, &ctx.output, &options, gs_res_dir.as_deref());
@@ -105,24 +124,39 @@ pub async fn compress_pdf_inner(
             sidecar: "gs",
             args: &args,
             progress: None,
-            capture_stderr: true,
+            capture_output: true,
         },
     )
     .await?;
 
-    let error = (outcome.exit_code != Some(0)).then(|| {
-        if outcome.stderr.trim().is_empty() {
-            format!("Ghostscript exited with code {:?}", outcome.exit_code)
-        } else {
-            outcome.stderr.trim().to_string()
-        }
-    });
+    // Ghostscript exits 0 on a file it cannot parse and writes an empty PDF; the
+    // only sign is this line, which it prints to stdout. Treat it as a failure,
+    // not a "kept original".
+    let read_no_pages = outcome.output.contains("No pages will be processed");
+    let exit_code = if read_no_pages {
+        tracing::warn!(input = %input, "Ghostscript processed no pages");
+        Some(1)
+    } else {
+        outcome.exit_code
+    };
+    let error = if read_no_pages {
+        Some("Could not read any pages: the PDF is corrupt or not a PDF".to_string())
+    } else {
+        (outcome.exit_code != Some(0)).then(|| {
+            if outcome.output.trim().is_empty() {
+                format!("Ghostscript exited with code {:?}", outcome.exit_code)
+            } else {
+                outcome.output.trim().to_string()
+            }
+        })
+    };
     Ok(finish_job(
         app,
         &ctx,
-        outcome.exit_code,
+        exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)
@@ -164,7 +198,28 @@ mod tests {
         assert!(args.contains(&"-dNOPAUSE".to_string()));
         assert!(args.contains(&"-dBATCH".to_string()));
         assert!(args.contains(&"-dQUIET".to_string()));
-        assert!(args.iter().any(|a| a.contains("sOutputFile")));
+        assert!(args.contains(&"-dSAFER".to_string()));
+        assert!(args.windows(2).any(|w| w == ["-o", "out.pdf"]));
+        assert!(!args.iter().any(|a| a.contains("sOutputFile")));
+    }
+
+    #[test]
+    fn gs_output_path_is_its_own_argv_entry_even_with_backslashes() {
+        let out = r"C:\Users\me\new folder\out.pdf";
+        let args = build_gs_args(r"C:\in.pdf", out, &opts(PdfQuality::Ebook, None), None);
+        let pos = args.iter().position(|a| a == "-o").unwrap();
+        assert_eq!(args[pos + 1], out);
+        assert_eq!(args.last().map(String::as_str), Some(r"C:\in.pdf"));
+    }
+
+    #[test]
+    fn gs_output_path_rejects_format_and_device_chars() {
+        assert!(validate_gs_output_path("/tmp/out.pdf").is_ok());
+        assert!(validate_gs_output_path(r"C:\docs\out.pdf").is_ok());
+        assert!(validate_gs_output_path("/tmp/page%d.pdf").is_err());
+        assert!(validate_gs_output_path("%pipe%cat").is_err());
+        assert!(validate_gs_output_path("/tmp/a|b.pdf").is_err());
+        assert!(validate_gs_output_path("/tmp/a\nb.pdf").is_err());
     }
 
     #[test]

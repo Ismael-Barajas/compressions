@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { clearThumbnailCache } from "../lib/commands";
+import { getMediaType, keptOriginal } from "../lib/fileUtils";
 import type {
   QueuedFile,
   VideoOptions,
@@ -12,6 +13,7 @@ import type {
   ProgressPayload,
   OutputMode,
   Resolution,
+  MediaType,
 } from "../types/compression";
 
 const DEFAULT_VIDEO_OPTIONS: VideoOptions = {
@@ -58,6 +60,17 @@ const DEFAULT_AUDIO_COMPRESSION_OPTIONS: AudioCompressionOptions = {
 
 export type SidebarTab = "compress" | "tools";
 export type CompressTab = "video" | "image" | "pdf" | "audio";
+export type FileView = "list" | "pipeline";
+
+/** Per-media-type status counts (one pipeline lane). */
+export interface LaneSummary {
+  queued: number;
+  processing: number;
+  complete: number;
+  error: number;
+  /** Sum of `progress` over this lane's processing files. */
+  progressSum: number;
+}
 
 /**
  * Aggregates over `files` that components need constantly. Kept up to date by
@@ -77,6 +90,21 @@ export interface FilesSummary {
   pdf: number;
   audio: number;
   queuedVideos: number;
+  /** One entry per media type. A lane object is only replaced when its numbers change. */
+  lanes: Record<MediaType, LaneSummary>;
+  /** Sum of result input/output sizes over complete files with a result. */
+  savedIn: number;
+  savedOut: number;
+  /** Complete files whose output was not smaller (backend kept the original). */
+  keptOriginal: number;
+}
+
+function emptyLane(): LaneSummary {
+  return { queued: 0, processing: 0, complete: 0, error: 0, progressSum: 0 };
+}
+
+function emptyLanes(): Record<MediaType, LaneSummary> {
+  return { video: emptyLane(), image: emptyLane(), pdf: emptyLane(), audio: emptyLane() };
 }
 
 const EMPTY_SUMMARY: FilesSummary = {
@@ -91,15 +119,38 @@ const EMPTY_SUMMARY: FilesSummary = {
   pdf: 0,
   audio: 0,
   queuedVideos: 0,
+  lanes: emptyLanes(),
+  savedIn: 0,
+  savedOut: 0,
+  keptOriginal: 0,
 };
 
+/** The result a file contributes to savedIn/savedOut/keptOriginal, if any. Tool
+ * conversions (a video's extracted audio or GIF) are not compression savings. */
+function countedResult(f: QueuedFile) {
+  if (f.status !== "complete" || !f.result) return undefined;
+  const isToolOutput = getMediaType(f.result.outputPath) !== f.mediaType;
+  return isToolOutput ? undefined : f.result;
+}
+
 export function deriveSummary(files: QueuedFile[]): FilesSummary {
-  const s: FilesSummary = { ...EMPTY_SUMMARY, total: files.length };
+  const s: FilesSummary = { ...EMPTY_SUMMARY, total: files.length, lanes: emptyLanes() };
   for (const f of files) {
+    const lane = s.lanes[f.mediaType];
     s[f.status] += 1;
     s[f.mediaType] += 1;
-    if (f.status === "processing") s.progressSum += f.progress;
+    lane[f.status] += 1;
+    if (f.status === "processing") {
+      s.progressSum += f.progress;
+      lane.progressSum += f.progress;
+    }
     if (f.status === "queued" && f.mediaType === "video") s.queuedVideos += 1;
+    const result = countedResult(f);
+    if (result) {
+      s.savedIn += result.inputSize;
+      s.savedOut += result.outputSize;
+      if (keptOriginal(result)) s.keptOriginal += 1;
+    }
   }
   return s;
 }
@@ -131,6 +182,7 @@ interface CompressionStore {
   activeCompressTab: CompressTab | null;
   theme: "light" | "dark";
   showThumbnails: boolean;
+  fileView: FileView;
   isCompressing: boolean;
   _activeOps: number;
   isPaused: boolean;
@@ -165,6 +217,7 @@ interface CompressionStore {
   setActiveCompressTab: (tab: CompressTab | null) => void;
   toggleTheme: () => void;
   toggleThumbnails: () => void;
+  setFileView: (view: FileView) => void;
   setIsCompressing: (value: boolean) => void;
   startOperation: () => void;
   endOperation: () => void;
@@ -193,6 +246,14 @@ function getStoredThumbnails(): boolean {
     return localStorage.getItem("compressions-show-thumbnails") === "true";
   }
   return false;
+}
+
+export function getStoredFileView(): FileView {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("compressions-file-view");
+    if (stored === "list" || stored === "pipeline") return stored;
+  }
+  return "list";
 }
 
 function getStoredTemplate(): string {
@@ -263,7 +324,8 @@ function summaryAfterTransition(
   next: QueuedFile,
 ): FilesSummary {
   const s = { ...summary };
-  if (prev.status !== next.status) {
+  const statusChanged = prev.status !== next.status;
+  if (statusChanged) {
     s[prev.status] -= 1;
     s[next.status] += 1;
     if (prev.mediaType === "video") {
@@ -273,8 +335,43 @@ function summaryAfterTransition(
   }
   const prevContribution = prev.status === "processing" ? prev.progress : 0;
   const nextContribution = next.status === "processing" ? next.progress : 0;
-  s.progressSum += nextContribution - prevContribution;
+  const progressDelta = nextContribution - prevContribution;
+  s.progressSum += progressDelta;
+
+  // mediaType never changes, so only this one lane is copied; the others keep
+  // their object identity so lane subscribers don't re-render.
+  if (statusChanged || progressDelta !== 0) {
+    const lane = { ...s.lanes[next.mediaType] };
+    if (statusChanged) {
+      lane[prev.status] -= 1;
+      lane[next.status] += 1;
+    }
+    lane.progressSum += progressDelta;
+    s.lanes = { ...s.lanes, [next.mediaType]: lane };
+  }
+
+  const prevResult = countedResult(prev);
+  const nextResult = countedResult(next);
+  if (prevResult !== nextResult) {
+    if (prevResult) {
+      s.savedIn -= prevResult.inputSize;
+      s.savedOut -= prevResult.outputSize;
+      if (keptOriginal(prevResult)) s.keptOriginal -= 1;
+    }
+    if (nextResult) {
+      s.savedIn += nextResult.inputSize;
+      s.savedOut += nextResult.outputSize;
+      if (keptOriginal(nextResult)) s.keptOriginal += 1;
+    }
+  }
   return s;
+}
+
+/** Dedup key for a path. Windows paths (drive letter or backslashes) are
+ * case-insensitive and accept either separator; the stored path is untouched. */
+function pathKey(path: string): string {
+  const isWindowsPath = /^[a-zA-Z]:/.test(path) || path.includes("\\");
+  return isWindowsPath ? path.replace(/\\/g, "/").toLowerCase() : path;
 }
 
 const RESET_FOR_QUEUE = {
@@ -304,6 +401,7 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
   activeCompressTab: null,
   theme: getInitialTheme(),
   showThumbnails: getStoredThumbnails(),
+  fileView: getStoredFileView(),
   isCompressing: false,
   _activeOps: 0,
   isPaused: false,
@@ -311,8 +409,14 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
 
   addFiles: (newFiles) =>
     set((state) => {
-      const existingPaths = new Set(state.files.map((f) => f.path));
-      const unique = newFiles.filter((f) => !existingPaths.has(f.path));
+      const seen = new Set(state.files.map((f) => pathKey(f.path)));
+      const unique: QueuedFile[] = [];
+      for (const f of newFiles) {
+        const key = pathKey(f.path);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(f);
+      }
       if (unique.length === 0) return {};
       const files = [...state.files, ...unique];
       return { files, summary: deriveSummary(files), filesRevision: state.filesRevision + 1 };
@@ -500,6 +604,11 @@ export const useCompressionStore = create<CompressionStore>((set) => ({
       localStorage.setItem("compressions-show-thumbnails", String(next));
       return { showThumbnails: next };
     }),
+
+  setFileView: (view) => {
+    localStorage.setItem("compressions-file-view", view);
+    set({ fileView: view });
+  },
 
   toggleTheme: () =>
     set((state) => {

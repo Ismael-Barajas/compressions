@@ -25,6 +25,9 @@ pub struct HistoryState {
     path: PathBuf,
     dirty: AtomicBool,
     notify: Notify,
+    /// Serializes writers: the background flusher and the exit-path `flush_now`
+    /// would otherwise both write the same `history.json.tmp`.
+    flush_lock: Mutex<()>,
 }
 
 impl HistoryState {
@@ -34,11 +37,17 @@ impl HistoryState {
             path,
             dirty: AtomicBool::new(false),
             notify: Notify::new(),
+            flush_lock: Mutex::new(()),
         }
     }
 
+    /// A poisoned lock still holds valid entries (pushes are single statements), so
+    /// recover rather than returning an empty list that a flush would then persist.
     pub fn snapshot(&self) -> Vec<HistoryEntry> {
-        self.entries.lock().map(|e| e.clone()).unwrap_or_default()
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn push(&self, entry: HistoryEntry) -> Result<(), String> {
@@ -65,6 +74,10 @@ impl HistoryState {
     /// thread; does the file I/O synchronously (callers on the runtime use
     /// `spawn_blocking`).
     pub fn flush_if_dirty(&self) -> Result<(), String> {
+        let _writer = self
+            .flush_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !self.dirty.swap(false, Ordering::SeqCst) {
             return Ok(());
         }

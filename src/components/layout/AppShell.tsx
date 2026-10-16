@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { useCompressionStore, type FileProbeInfo } from "../../stores/compressionStore";
-import { probeFilesBatch, scanPaths } from "../../lib/commands";
+import { probeFilesBatch } from "../../lib/commands";
+import { scanForQueue } from "../../lib/scanForQueue";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { loadSupportedMedia } from "../../lib/mediaTypes";
 import { useClipboardPaste } from "../../hooks/useClipboardPaste";
@@ -37,7 +38,7 @@ export function AppShell() {
   const processFilePaths = useCallback(
     async (paths: string[]) => {
       try {
-        const resolvedPaths = await scanPaths(paths);
+        const resolvedPaths = await scanForQueue(paths);
         const newFiles = pathsToQueuedFiles(resolvedPaths);
         if (newFiles.length > 0) addFiles(newFiles);
       } catch {
@@ -87,8 +88,10 @@ export function AppShell() {
     };
   }, [processFilePaths]);
 
-  // Track which files have already been sent for probing to avoid re-probing
-  const probedPathsRef = useRef(new Set<string>());
+  // Track which rows have already been sent for probing to avoid re-probing. Keyed
+  // by row id, not path: a file removed and added again is a new row and needs its
+  // own probe (keyed by path it stayed at 0 B with no duration).
+  const probedIdsRef = useRef(new Set<string>());
   const probeBufferRef = useRef<Array<{ id: string; info: FileProbeInfo }>>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFlushRef = useRef(0);
@@ -114,7 +117,7 @@ export function AppShell() {
 
     // Reset probe tracking when all files are cleared so re-adding works
     if (files.length === 0) {
-      probedPathsRef.current.clear();
+      probedIdsRef.current.clear();
       probeBufferRef.current = [];
       if (flushTimerRef.current) {
         clearTimeout(flushTimerRef.current);
@@ -124,7 +127,7 @@ export function AppShell() {
     }
 
     const unprobed = files.filter(
-      (f) => f.size === 0 && f.status === "queued" && !probedPathsRef.current.has(f.path),
+      (f) => f.size === 0 && f.status === "queued" && !probedIdsRef.current.has(f.id),
     );
     if (unprobed.length === 0) return;
 
@@ -133,8 +136,8 @@ export function AppShell() {
     const paths = unprobed.map((f) => f.path);
 
     // Mark all as in-flight immediately to prevent re-probing
-    for (const p of paths) {
-      probedPathsRef.current.add(p);
+    for (const f of unprobed) {
+      probedIdsRef.current.add(f.id);
     }
 
     probeFilesBatch(paths, (event) => {

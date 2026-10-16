@@ -1,8 +1,8 @@
 use tauri::{ipc::Channel, AppHandle};
 
 use crate::commands::job::{
-    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started,
-    single_threaded_batch_concurrency, ProgressTarget, SidecarSpec,
+    ffmpeg_failure_message, finish_job, prepare_job, resolve_duration, run_batch, run_sidecar,
+    send_started, single_threaded_batch_concurrency, ProgressTarget, SidecarSpec,
 };
 use crate::ffmpeg::args::{build_audio_compression_args, build_audio_extraction_args};
 use crate::types::{
@@ -35,19 +35,19 @@ async fn run_audio_job(
             sidecar: "ffmpeg",
             args: &args,
             progress: Some(ProgressTarget::full(total_duration, on_progress)),
-            capture_stderr: false,
+            capture_output: false,
         },
     )
     .await?;
 
-    let error = (outcome.exit_code != Some(0))
-        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    let error = (outcome.exit_code != Some(0)).then(|| ffmpeg_failure_message(outcome.exit_code));
     Ok(finish_job(
         app,
         &ctx,
         outcome.exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)

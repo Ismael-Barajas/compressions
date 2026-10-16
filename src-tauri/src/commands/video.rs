@@ -1,8 +1,8 @@
 use tauri::{ipc::Channel, AppHandle, Manager, State};
 
 use crate::commands::job::{
-    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started,
-    ProgressTarget, SidecarSpec,
+    ffmpeg_failure_message, finish_job, prepare_job, resolve_duration, run_batch, run_sidecar,
+    send_started, ProgressTarget, SidecarSpec,
 };
 use crate::ffmpeg::args::build_video_args;
 use crate::state::{AppState, HwEncoders};
@@ -75,8 +75,9 @@ pub async fn compress_video_inner(
     send_started(&ctx, on_progress);
 
     let mut opts = options.clone();
+    // Always overwrite: the field is backend-owned and must not be trusted from IPC.
+    opts.hw_encoder = hw_encoder.clone();
     if let Some(ref hw) = hw_encoder {
-        opts.hw_encoder = Some(hw.clone());
         tracing::info!(encoder = %hw, "Trying HW encoder");
     }
 
@@ -88,20 +89,20 @@ pub async fn compress_video_inner(
             sidecar: "ffmpeg",
             args: &args,
             progress: Some(ProgressTarget::full(total_duration, on_progress)),
-            capture_stderr: false,
+            capture_output: false,
         },
     )
     .await?;
 
-    // HW encoder failed — retry with software (unless the user cancelled).
-    if outcome.exit_code != Some(0)
-        && hw_encoder.is_some()
-        && !crate::commands::queue::is_cancelled(app)
-    {
-        if let Some(ref hw) = hw_encoder {
-            disable_hw_encoder(app, hw);
-        }
-        tracing::warn!("HW encoder failed, falling back to software");
+    // HW encoder failed — retry with software (unless the user cancelled, either
+    // this file or the whole queue: a killed encoder is not a broken encoder).
+    if should_retry_in_software(
+        outcome.exit_code,
+        hw_encoder.is_some(),
+        outcome.cancelled,
+        crate::commands::queue::is_cancelled(app),
+    ) {
+        tracing::warn!("HW encoder failed, retrying this file in software");
         if let Err(e) = tokio::fs::remove_file(&ctx.output).await {
             tracing::warn!(path = %ctx.output, error = %e, "Failed to remove partial HW output");
         }
@@ -114,23 +115,45 @@ pub async fn compress_video_inner(
                 sidecar: "ffmpeg",
                 args: &sw_args,
                 progress: Some(ProgressTarget::full(total_duration, on_progress)),
-                capture_stderr: false,
+                capture_output: false,
             },
         )
         .await?;
+
+        // Only blame the HW encoder when software succeeds on the same input. If both
+        // fail, the file is the problem (corrupt, empty, unsupported) and the GPU
+        // encoder must stay enabled for the rest of the session.
+        if outcome.exit_code == Some(0) {
+            if let Some(ref hw) = hw_encoder {
+                disable_hw_encoder(app, hw);
+            }
+        } else {
+            tracing::info!(
+                "Software encode failed too; the input is at fault, HW encoder stays enabled"
+            );
+        }
     }
 
-    let error = (outcome.exit_code != Some(0))
-        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    let error = (outcome.exit_code != Some(0)).then(|| ffmpeg_failure_message(outcome.exit_code));
     Ok(finish_job(
         app,
         &ctx,
         outcome.exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)
+}
+
+fn should_retry_in_software(
+    exit_code: Option<i32>,
+    used_hw: bool,
+    job_cancelled: bool,
+    all_cancelled: bool,
+) -> bool {
+    exit_code != Some(0) && used_hw && !job_cancelled && !all_cancelled
 }
 
 /// Video encoding is sequential on purpose: libx264/x265/SVT-AV1 already saturate
@@ -166,6 +189,9 @@ pub fn cancel_compression(
     job_id: String,
 ) -> Result<(), String> {
     let mut app_state = state.lock().map_err(|e| e.to_string())?;
+    // Mark before killing so the runner sees "stopped by user" when the child exits
+    // (and so a child that has not registered yet is killed on registration).
+    app_state.cancelled_jobs.insert(job_id.clone());
     if let Some((child, _)) = app_state.active_jobs.remove(&job_id) {
         child
             .kill()
@@ -201,6 +227,21 @@ mod tests {
             Some("hevc_nvenc")
         );
         assert_eq!(resolve_hw_encoder(&VideoCodec::H264, &hw), None);
+    }
+
+    #[test]
+    fn software_retry_only_for_genuine_hw_failures() {
+        // HW failed on its own: retry.
+        assert!(should_retry_in_software(Some(1), true, false, false));
+        // Per-file Stop killed the HW encode: no retry.
+        assert!(!should_retry_in_software(None, true, true, false));
+        assert!(!should_retry_in_software(Some(1), true, true, false));
+        // Cancel All: no retry.
+        assert!(!should_retry_in_software(Some(1), true, false, true));
+        // Software encode failed: nothing to fall back to.
+        assert!(!should_retry_in_software(Some(1), false, false, false));
+        // Success: no retry.
+        assert!(!should_retry_in_software(Some(0), true, false, false));
     }
 
     #[test]

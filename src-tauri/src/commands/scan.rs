@@ -5,6 +5,12 @@ use walkdir::WalkDir;
 
 use crate::media::is_supported_media_path;
 
+/// Bounds for a dropped folder: deep enough for any real media library, small
+/// enough that a dropped drive root cannot enumerate the whole disk onto the IPC
+/// boundary.
+const MAX_SCAN_DEPTH: usize = 32;
+pub const MAX_SCAN_FILES: usize = 10_000;
+
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
     entry.depth() > 0
         && entry
@@ -17,16 +23,25 @@ fn is_hidden(entry: &walkdir::DirEntry) -> bool {
 fn scan_paths_sync(paths: &[String]) -> Vec<String> {
     let mut results = Vec::new();
 
-    for p in paths {
+    'outer: for p in paths {
         let path = Path::new(p);
         if path.is_dir() {
             // No symlink following (guards against cycles), skip hidden entries such
             // as `.git`/`.Trash`, and keep going past unreadable subdirectories.
             let walker = WalkDir::new(path)
                 .follow_links(false)
+                .max_depth(MAX_SCAN_DEPTH)
                 .into_iter()
                 .filter_entry(|e| !is_hidden(e));
             for entry in walker.filter_map(|e| e.ok()) {
+                if results.len() >= MAX_SCAN_FILES {
+                    tracing::warn!(
+                        root = %p,
+                        cap = MAX_SCAN_FILES,
+                        "Folder scan hit the file cap; remaining files were skipped"
+                    );
+                    break 'outer;
+                }
                 if entry.file_type().is_file() && is_supported_media_path(entry.path()) {
                     if let Some(s) = entry.path().to_str() {
                         results.push(s.to_string());
@@ -93,5 +108,21 @@ mod tests {
         let s = f.to_string_lossy().to_string();
         let found = scan_paths_sync(&[s.clone(), s.clone()]);
         assert_eq!(found, vec![s]);
+    }
+
+    #[test]
+    fn stops_below_max_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deep = dir.path().to_path_buf();
+        for i in 0..(MAX_SCAN_DEPTH + 2) {
+            deep = deep.join(format!("d{}", i));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("far.jpg"), b"x").unwrap();
+        std::fs::write(dir.path().join("near.jpg"), b"x").unwrap();
+
+        let found = scan_paths_sync(&[dir.path().to_string_lossy().to_string()]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("near.jpg"));
     }
 }

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, State};
 
-use crate::state::{AppState, CancelFlag};
+use crate::state::{AppState, CancelFlag, PauseFlag};
 
 /// True if a queue cancel is currently active. Used by sidecar handlers to
 /// suppress the error event + history append when a child died because the
@@ -22,6 +22,9 @@ pub fn is_cancelled(app: &AppHandle) -> bool {
 pub(crate) fn shutdown_all_jobs(app: &AppHandle) {
     if let Some(flag) = app.try_state::<CancelFlag>() {
         flag.0.store(true, Ordering::SeqCst);
+    }
+    if let Some(flag) = app.try_state::<PauseFlag>() {
+        flag.0.store(false, Ordering::SeqCst);
     }
     let Some(state) = app.try_state::<Mutex<AppState>>() else {
         return;
@@ -50,9 +53,29 @@ pub fn cancel_all(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Clear the cancel flag — call at the start of each fresh queue drain.
+/// Clear the cancel and pause flags — call at the start of each fresh queue drain.
 #[tauri::command]
-pub fn reset_cancel(cancel_flag: State<'_, CancelFlag>) -> Result<(), String> {
+pub fn reset_cancel(
+    cancel_flag: State<'_, CancelFlag>,
+    pause_flag: State<'_, PauseFlag>,
+) -> Result<(), String> {
     cancel_flag.0.store(false, Ordering::SeqCst);
+    pause_flag.0.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+/// Pause the queue: files already running finish, no new file starts.
+#[tauri::command]
+pub fn pause_queue(pause_flag: State<'_, PauseFlag>) -> Result<(), String> {
+    tracing::info!("Pause requested");
+    pause_flag.0.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+/// Resume a paused queue.
+#[tauri::command]
+pub fn resume_queue(pause_flag: State<'_, PauseFlag>) -> Result<(), String> {
+    tracing::info!("Resume requested");
+    pause_flag.0.store(false, Ordering::SeqCst);
     Ok(())
 }

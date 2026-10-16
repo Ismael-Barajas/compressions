@@ -4,8 +4,8 @@ use tauri::{ipc::Channel, AppHandle};
 use uuid::Uuid;
 
 use crate::commands::job::{
-    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started, JobContext,
-    ProgressTarget, SidecarOutcome, SidecarSpec,
+    ffmpeg_failure_message, finish_job, prepare_job, resolve_duration, run_batch, run_sidecar,
+    send_started, JobContext, ProgressTarget, SidecarOutcome, SidecarSpec,
 };
 use crate::ffmpeg::args::{
     build_gif_palette_args, build_gif_paletteuse_args, build_gif_single_pass_args,
@@ -49,7 +49,7 @@ async fn run_ffmpeg(
             sidecar: "ffmpeg",
             args,
             progress: Some(progress),
-            capture_stderr: false,
+            capture_output: false,
         },
     )
     .await
@@ -136,14 +136,14 @@ pub async fn convert_video_to_gif_inner(
         convert_two_pass(app, &ctx, &options, total_duration, on_progress).await?
     };
 
-    let error = (outcome.exit_code != Some(0))
-        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    let error = (outcome.exit_code != Some(0)).then(|| ffmpeg_failure_message(outcome.exit_code));
     Ok(finish_job(
         app,
         &ctx,
         outcome.exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)

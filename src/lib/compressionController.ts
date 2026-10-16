@@ -16,6 +16,8 @@ import {
   cancelCompression,
   cancelAll as cancelAllBackend,
   resetCancel,
+  pauseQueue,
+  resumeQueue,
   type BatchEntry,
 } from "./commands";
 import { useCompressionStore } from "../stores/compressionStore";
@@ -24,6 +26,7 @@ import {
   getAudioExtension,
   resolveAudioCompressionExtension,
   resolveImageOutputFormat,
+  resolveVideoOutputFormat,
   resolveOutputDir,
   templateStamp,
 } from "./fileUtils";
@@ -153,7 +156,7 @@ function compressBatchFor(type: MediaType, files: QueuedFile[]): BatchRun {
     case "video":
       return {
         files,
-        entries: entriesFor(files, () => undefined),
+        entries: entriesFor(files, (f) => resolveVideoOutputFormat(videoOptions, f.path)),
         invoke: (entries, ch) => compressVideosBatch(entries, videoOptions, ch),
       };
     case "image":
@@ -249,6 +252,11 @@ function drainQueue(): Promise<void> {
   });
 }
 
+// Synchronous re-entry guard for the drain loop. `isCompressing` only flips after
+// the `await resetCancel()` below, so a second call landing in that window (held
+// Space key, double-click) would otherwise start a second drain over the same queue.
+let draining = false;
+
 export async function startCompression(): Promise<void> {
   const { outputDir, outputMode, summary } = store.getState();
   if (summary.queued === 0) return;
@@ -258,18 +266,25 @@ export async function startCompression(): Promise<void> {
     return;
   }
 
-  store.getState().resetQueueControlFlags();
-  try {
-    await resetCancel();
-  } catch (err) {
-    console.warn("resetCancel failed (continuing):", err);
-  }
+  if (draining) return;
+  draining = true;
 
-  store.getState().startOperation();
   try {
-    await drainQueue();
+    store.getState().resetQueueControlFlags();
+    try {
+      await resetCancel();
+    } catch (err) {
+      console.warn("resetCancel failed (continuing):", err);
+    }
+
+    store.getState().startOperation();
+    try {
+      await drainQueue();
+    } finally {
+      store.getState().endOperation();
+    }
   } finally {
-    store.getState().endOperation();
+    draining = false;
   }
 }
 
@@ -283,7 +298,9 @@ export async function cancelFile(fileId: string): Promise<void> {
     } catch {
       // Process may have already finished
     }
-    store.getState().markError(file.jobId, "Cancelled by user");
+    // Only files still processing are marked cancelled: a job that completed
+    // during the IPC round-trip keeps its "complete" status.
+    store.getState().markErrorByIds([file.id], "Cancelled by user", ["processing"]);
   }
 }
 
@@ -309,6 +326,15 @@ async function runSingleTool(
     ext,
     settings.outputTemplate,
   );
+
+  // Same preamble as startCompression: a stale cancel flag in Rust would make
+  // the sidecar bail out immediately.
+  store.getState().resetQueueControlFlags();
+  try {
+    await resetCancel();
+  } catch (err) {
+    console.warn("resetCancel failed (continuing):", err);
+  }
 
   store.getState().startOperation();
   store.getState().setFileStatus(file.id, "processing", undefined);
@@ -348,6 +374,13 @@ async function runToolBatch(
     .files.filter((f) => f.mediaType === "video" && f.status === "queued");
   if (videoFiles.length === 0) return;
 
+  store.getState().resetQueueControlFlags();
+  try {
+    await resetCancel();
+  } catch (err) {
+    console.warn("resetCancel failed (continuing):", err);
+  }
+
   store.getState().startOperation();
   try {
     await runBatch({ files: videoFiles, entries: entriesFor(videoFiles, () => ext), invoke });
@@ -368,12 +401,17 @@ export async function convertAllToGif(): Promise<void> {
   await runToolBatch("gif", (entries, ch) => convertVideosToGifBatch(entries, gifOptions, ch));
 }
 
+// Pause is enforced in two places: the drain loop submits no new batch, and the
+// Rust batch runner starts no new file from a batch already submitted. Files
+// already running finish either way.
 export function pauseCompression(): void {
   store.getState().pauseCompression();
+  pauseQueue().catch((err) => console.warn("pause_queue failed:", err));
 }
 
 export function resumeCompression(): void {
   store.getState().resumeCompression();
+  resumeQueue().catch((err) => console.warn("resume_queue failed:", err));
 }
 
 // Stops the queue immediately: kill child processes + raise the cancel flag in

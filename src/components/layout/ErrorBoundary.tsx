@@ -6,13 +6,14 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  error: Error | null;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, error: null };
 
-  static getDerivedStateFromError(): State {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error) {
@@ -32,6 +33,14 @@ export class ErrorBoundary extends Component<Props, State> {
           <p className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
             Something went wrong
           </p>
+          {this.state.error?.message && (
+            <p
+              className="max-w-md break-words text-center font-mono text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {this.state.error.message}
+            </p>
+          )}
           <button
             onClick={() => window.location.reload()}
             className="btn-primary"
