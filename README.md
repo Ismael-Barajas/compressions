@@ -69,6 +69,7 @@ A cross-platform desktop app for compressing videos, images, audio, and PDFs. Bu
 - **Add files during compression** — new files join the running queue
 - **Queue controls** — Pause, Resume, and Cancel All; per-file cancel and retry
 - Batch progress bar and per-file progress with ETA
+- **Pipeline view** — Toggle List | Pipeline in the file list toolbar for a live, read-only diagram of the queue, encoder lanes, size check, and output
 - Smaller files first for video, PDF, and audio; larger first for images to keep parallel workers busy
 - Output modes: same folder, subfolder, or custom directory
 - Filename templates (`{name}`, `{date}`, `{time}`); one timestamp per batch
@@ -182,6 +183,7 @@ CI runs the frontend tests, typecheck, Rust tests (Linux/macOS/Windows), clippy,
 | Audio     | FFmpeg sidecar                                                      |
 | Image     | mozjpeg, oxipng, webp, ravif, gif + imagequant, fast_image_resize   |
 | PDF       | Ghostscript sidecar                                                 |
+| Pipeline  | [React Flow](https://reactflow.dev) (`@xyflow/react`, MIT)          |
 
 ## Third-Party Licenses
 

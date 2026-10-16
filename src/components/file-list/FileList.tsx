@@ -1,12 +1,17 @@
-import { useRef, useEffect, useCallback } from "react";
-import { Plus, Trash2, Play, Pause, Square, FolderOpen, LayoutGrid, LayoutList } from "lucide-react";
+import { lazy, Suspense, useRef, useEffect, useCallback } from "react";
+import { Plus, Trash2, Play, Pause, Square, FolderOpen, LayoutGrid, LayoutList, List, Workflow } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCompressionStore } from "../../stores/compressionStore";
+import { useCompressionStore, type FileView } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
 import { scanPaths, generateThumbnailsBatch } from "../../lib/commands";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { dialogFilters } from "../../lib/mediaTypes";
 import { FileItem } from "./FileItem";
+
+// React Flow is heavy, so the pipeline view is its own chunk. Calling loadPipelineView()
+// again (e.g. on hover) just preloads it; the module promise is cached.
+const loadPipelineView = () => import("../pipeline/PipelineView");
+const PipelineView = lazy(loadPipelineView);
 
 function addResolvedPaths(paths: string[]) {
   const newFiles = pathsToQueuedFiles(paths);
@@ -29,6 +34,8 @@ export function FileList() {
   const showThumbnails = useCompressionStore((s) => s.showThumbnails);
   const toggleThumbnails = useCompressionStore((s) => s.toggleThumbnails);
   const setThumbnailPath = useCompressionStore((s) => s.setThumbnailPath);
+  const fileView = useCompressionStore((s) => s.fileView);
+  const setFileView = useCompressionStore((s) => s.setFileView);
   const { startCompression, pauseCompression, resumeCompression, cancelAllCompression } = useCompression();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -43,7 +50,7 @@ export function FileList() {
     getScrollElement: () => scrollRef.current,
     estimateSize: () => rowHeight,
     overscan: 5,
-    enabled: useVirtual,
+    enabled: useVirtual && fileView === "list",
   });
 
   // Viewport-aware thumbnail generation.
@@ -53,6 +60,8 @@ export function FileList() {
   const generateVisibleThumbnails = useCallback(() => {
     const currentFiles = useCompressionStore.getState().files;
     const currentShow = useCompressionStore.getState().showThumbnails;
+    // The scroll element is unmounted in pipeline view, so there is nothing visible to load
+    if (useCompressionStore.getState().fileView === "pipeline") return;
     if (!currentShow || currentFiles.length === 0) return;
 
     const visibleItems = virtualizer.getVirtualItems();
@@ -99,10 +108,10 @@ export function FileList() {
   const rangeStart = range?.startIndex ?? 0;
   const rangeEnd = range?.endIndex ?? 0;
   useEffect(() => {
-    if (!showThumbnails || fileCount === 0) return;
+    if (fileView === "pipeline" || !showThumbnails || fileCount === 0) return;
     const timer = setTimeout(generateVisibleThumbnails, 100);
     return () => clearTimeout(timer);
-  }, [showThumbnails, fileCount, rangeStart, rangeEnd, generateVisibleThumbnails]);
+  }, [fileView, showThumbnails, fileCount, rangeStart, rangeEnd, generateVisibleThumbnails]);
 
   // Clear in-flight tracking when thumbnails toggled off
   useEffect(() => {
@@ -147,17 +156,40 @@ export function FileList() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Toolbar */}
+      {/* Must stay on one line at the 800px minimum window (~448px panel), so the view
+          toggle is icon-only and the count truncates rather than wraps. */}
       <div
-        className="mb-3 flex items-center justify-between border-b pb-3"
+        className="mb-3 flex items-center justify-between gap-3 border-b pb-3"
         style={{ borderColor: "var(--border)" }}
       >
-        <span className="font-data" style={{ color: "var(--text-muted)" }}>
-          {fileCount} file{fileCount !== 1 ? "s" : ""} queued
+        <span className="font-data min-w-0 truncate" style={{ color: "var(--text-muted)" }}>
+          {fileCount} file{fileCount !== 1 ? "s" : ""}
         </span>
-        <div className="flex gap-1.5">
-          <ToolbarButton onClick={toggleThumbnails} title={showThumbnails ? "List view" : "Thumbnail view"}>
-            {showThumbnails ? <LayoutList size={13} /> : <LayoutGrid size={13} />}
-          </ToolbarButton>
+        <div className="flex shrink-0 gap-1.5">
+          <div role="group" aria-label="View" className="flex">
+            <ViewToggleButton active={fileView === "list"} view="list" onSelect={setFileView} label="List view">
+              <List size={13} />
+            </ViewToggleButton>
+            <ViewToggleButton
+              active={fileView === "pipeline"}
+              view="pipeline"
+              onSelect={setFileView}
+              label="Pipeline view"
+              onMouseEnter={() => void loadPipelineView()}
+              onFocus={() => void loadPipelineView()}
+            >
+              <Workflow size={13} />
+            </ViewToggleButton>
+          </div>
+          {fileView === "list" && (
+            <ToolbarButton
+              onClick={toggleThumbnails}
+              title={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
+              aria-label={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
+            >
+              {showThumbnails ? <LayoutList size={13} /> : <LayoutGrid size={13} />}
+            </ToolbarButton>
+          )}
           <ToolbarButton onClick={handleAddMore}>
             <Plus size={13} />
             Add
@@ -178,45 +210,51 @@ export function FileList() {
         </div>
       </div>
 
-      {/* File list */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
-        {useVirtual ? (
-          <div
-            style={{
-              height: virtualizer.getTotalSize(),
-              width: "100%",
-              position: "relative",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const file = files[virtualRow.index];
-              return (
-                <div
-                  key={file.id}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    height: virtualRow.size,
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                >
-                  <div className="pb-1.5">
-                    <FileItem file={file} showThumbnails={showThumbnails} />
+      {/* File list / pipeline */}
+      {fileView === "pipeline" ? (
+        <Suspense fallback={<PipelineSkeleton />}>
+          <PipelineView />
+        </Suspense>
+      ) : (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
+          {useVirtual ? (
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const file = files[virtualRow.index];
+                return (
+                  <div
+                    key={file.id}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: virtualRow.size,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <div className="pb-1.5">
+                      <FileItem file={file} showThumbnails={showThumbnails} />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {files.map((file) => (
-              <FileItem key={file.id} file={file} showThumbnails={showThumbnails} />
-            ))}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {files.map((file) => (
+                <FileItem key={file.id} file={file} showThumbnails={showThumbnails} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Queue controls */}
       {!isCompressing && hasQueued && (
@@ -295,4 +333,45 @@ function ToolbarButton({
       {children}
     </button>
   );
+}
+
+// Icon-only segment; the label is its tooltip and accessible name.
+function ViewToggleButton({
+  active,
+  view,
+  label,
+  onSelect,
+  children,
+  ...props
+}: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onSelect"> & {
+  active: boolean;
+  view: FileView;
+  label: string;
+  onSelect: (view: FileView) => void;
+}) {
+  return (
+    <button
+      className="flex items-center px-2.5 py-1 text-xs font-medium transition-colors duration-100"
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      style={{
+        color: active ? "var(--accent)" : "var(--text-secondary)",
+        border: "1px solid var(--border)",
+        backgroundColor: active ? "var(--accent-glow)" : "transparent",
+        cursor: "pointer",
+        // overlap borders so the pair shares a single 1px divider
+        marginLeft: view === "pipeline" ? -1 : 0,
+      }}
+      onClick={() => onSelect(view)}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Reserves the pipeline area while its chunk loads so nothing jumps
+function PipelineSkeleton() {
+  return <div className="min-h-0 flex-1" style={{ border: "1px solid var(--border)" }} />;
 }

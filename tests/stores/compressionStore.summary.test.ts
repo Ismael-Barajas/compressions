@@ -28,9 +28,9 @@ vi.mock("../../src/lib/commands", () => ({
   clearThumbnailCache: vi.fn(() => Promise.resolve()),
 }));
 
-const { useCompressionStore, deriveSummary } = await import("../../src/stores/compressionStore");
+const { useCompressionStore, deriveSummary, getStoredFileView } = await import("../../src/stores/compressionStore");
 
-import type { QueuedFile, ProgressPayload } from "../../src/types/compression";
+import type { QueuedFile, ProgressPayload, CompressionResult } from "../../src/types/compression";
 
 let counter = 0;
 function makeFile(overrides: Partial<QueuedFile> = {}): QueuedFile {
@@ -52,6 +52,17 @@ function progress(jobId: string, percent: number): ProgressPayload {
 }
 
 const store = () => useCompressionStore.getState();
+
+function result(jobId: string, inputSize: number, outputSize: number): CompressionResult {
+  return {
+    jobId, inputPath: "/in", outputPath: "/out", inputSize, outputSize,
+    durationMs: 1, success: true, error: null,
+  };
+}
+
+function expectConsistent() {
+  expect(store().summary).toEqual(deriveSummary(store().files));
+}
 
 describe("summary counters", () => {
   beforeEach(() => {
@@ -183,5 +194,133 @@ describe("per-file updates", () => {
     expect(byId.get(b.id)?.error).toBe("batch failed");
     expect(byId.get(c.id)?.status).toBe("complete");
     expect(store().summary).toMatchObject({ error: 2, complete: 1, queued: 0 });
+  });
+});
+
+describe("lane summaries", () => {
+  beforeEach(() => {
+    useCompressionStore.setState({ files: [], summary: deriveSummary([]), filesRevision: 0 });
+  });
+
+  it("tracks per-lane counts through the file lifecycle", () => {
+    const v1 = makeFile();
+    const v2 = makeFile();
+    const img = makeFile({ mediaType: "image", path: "/lane.png" });
+    const pdf = makeFile({ mediaType: "pdf", path: "/lane.pdf" });
+    const aud = makeFile({ mediaType: "audio", path: "/lane.mp3" });
+    store().addFiles([v1, v2, img, pdf, aud]);
+    expectConsistent();
+    expect(store().summary.lanes.video).toEqual({ queued: 2, processing: 0, complete: 0, error: 0, progressSum: 0 });
+    expect(store().summary.lanes.image.queued).toBe(1);
+    expect(store().summary.lanes.audio.queued).toBe(1);
+
+    store().setFileStatus(v1.id, "processing", "job-v1");
+    store().setFileStatus(img.id, "processing", "job-img");
+    expectConsistent();
+    expect(store().summary.lanes.video).toMatchObject({ queued: 1, processing: 1 });
+
+    store().updateProgress("job-v1", progress("job-v1", 30));
+    store().updateProgress("job-img", progress("job-img", 50));
+    expectConsistent();
+    expect(store().summary.lanes.video.progressSum).toBe(30);
+    expect(store().summary.lanes.image.progressSum).toBe(50);
+
+    store().markComplete("job-v1", result("job-v1", 100, 40));
+    expectConsistent();
+    expect(store().summary.lanes.video).toMatchObject({ queued: 1, processing: 0, complete: 1, progressSum: 0 });
+
+    store().markError("job-img", "bad pixels");
+    expectConsistent();
+    expect(store().summary.lanes.image).toMatchObject({ processing: 0, error: 1, progressSum: 0 });
+
+    store().retryFile(img.id);
+    expectConsistent();
+    expect(store().summary.lanes.image).toMatchObject({ queued: 1, error: 0 });
+
+    store().setFileStatus(pdf.id, "processing", "job-pdf");
+    store().updateProgress("job-pdf", progress("job-pdf", 20));
+    store().cancelAllCompression();
+    expectConsistent();
+    expect(store().summary.lanes.pdf).toEqual({ queued: 1, processing: 0, complete: 0, error: 0, progressSum: 0 });
+    expect(store().summary.lanes.video.complete).toBe(1);
+
+    store().removeFile(v1.id);
+    expectConsistent();
+    expect(store().summary.lanes.video).toEqual({ queued: 1, processing: 0, complete: 0, error: 0, progressSum: 0 });
+  });
+
+  it("sums saved sizes and counts kept originals", () => {
+    const a = makeFile();
+    const b = makeFile({ mediaType: "image", path: "/saved.png" });
+    store().addFiles([a, b]);
+    store().setFileStatus(a.id, "processing", "job-a");
+    store().setFileStatus(b.id, "processing", "job-b");
+
+    store().markComplete("job-a", result("job-a", 1000, 400));
+    expectConsistent();
+    expect(store().summary).toMatchObject({ savedIn: 1000, savedOut: 400, keptOriginal: 0 });
+
+    // Keep-original-if-larger reports outputSize === inputSize.
+    store().markComplete("job-b", result("job-b", 500, 500));
+    expectConsistent();
+    expect(store().summary).toMatchObject({ savedIn: 1500, savedOut: 900, keptOriginal: 1 });
+
+    store().retryFile(b.id);
+    expectConsistent();
+    expect(store().summary).toMatchObject({ savedIn: 1000, savedOut: 400, keptOriginal: 0 });
+
+    store().retryFile(a.id);
+    expectConsistent();
+    expect(store().summary).toMatchObject({ savedIn: 0, savedOut: 0, keptOriginal: 0 });
+  });
+
+  it("a progress tick only replaces the touched lane object", () => {
+    const v = makeFile();
+    const i = makeFile({ mediaType: "image", path: "/tick.png" });
+    store().addFiles([v, i]);
+    store().setFileStatus(v.id, "processing", "job-v");
+    const before = store().summary.lanes;
+    store().updateProgress("job-v", progress("job-v", 15));
+    const after = store().summary.lanes;
+    expect(after.image).toBe(before.image);
+    expect(after.pdf).toBe(before.pdf);
+    expect(after.audio).toBe(before.audio);
+    expect(after.video).not.toBe(before.video);
+    expect(after.video.progressSum).toBe(15);
+  });
+
+  it("never mutates the shared empty lanes", () => {
+    store().clearFiles();
+    const f = makeFile();
+    store().addFiles([f]);
+    store().setFileStatus(f.id, "processing", "job-e");
+    store().clearFiles();
+    expect(store().summary.lanes.video).toEqual({ queued: 0, processing: 0, complete: 0, error: 0, progressSum: 0 });
+    expect(deriveSummary([]).lanes.video.queued).toBe(0);
+  });
+});
+
+describe("file view preference", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("defaults to list", () => {
+    expect(store().fileView).toBe("list");
+    expect(getStoredFileView()).toBe("list");
+  });
+
+  it("setFileView updates state and persists", () => {
+    store().setFileView("pipeline");
+    expect(store().fileView).toBe("pipeline");
+    expect(localStorage.getItem("compressions-file-view")).toBe("pipeline");
+    expect(getStoredFileView()).toBe("pipeline");
+    store().setFileView("list");
+    expect(localStorage.getItem("compressions-file-view")).toBe("list");
+  });
+
+  it("falls back to list for an invalid stored value", () => {
+    localStorage.setItem("compressions-file-view", "grid");
+    expect(getStoredFileView()).toBe("list");
   });
 });
