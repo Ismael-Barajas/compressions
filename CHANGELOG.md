@@ -2,7 +2,36 @@
 
 All notable changes to Compressions are documented here.
 
+## [1.2.2] — 2026-10-15
+
+### New
+
+- **Pipeline view**: a List | Pipeline toggle in the file list toolbar shows the batch as a live diagram: the queue, the video, image, PDF and audio lanes running side by side, the size check, and how much was saved
+- **Pause actually pauses**: the file that is running finishes, and the next one waits until you press Resume (before, the whole batch kept going)
+
+### Bug Fixes
+
+- **Converted files are kept, even when larger**: converting PNG to JPEG or MP3 to WAV no longer silently gives you back the original file in the old format, and those files are no longer labelled "Already optimized". Only same-format outputs fall back to the original when compression doesn't help
+- **WebM, MOV, AVI, WMV and M4V sources**: when the source container can't hold the chosen codecs (for example a WebM with H.264), the output is written as MP4 instead of failing or producing a broken file
+- **Hardware encoding stays on after a bad file**: a corrupt or empty video no longer turns off NVENC (or other hardware encoders) for the rest of the session; it is only turned off when the software retry succeeds
+- **Corrupt PDFs are reported as failed** instead of "complete" with an empty output
+- **Readable errors**: FFmpeg failures say what went wrong (for example "Could not read the file: it is corrupt or not a supported format") instead of a raw exit code
+- **Queue order is kept**: files start in the order the scheduler picks (videos smallest first, images largest first) instead of whichever task woke up first
+- **Adding the same folder again** no longer queues the files the app already wrote there (`photo_compressed.jpg` → `photo_compressed_compressed.jpg`)
+- A file removed and added again gets its details (size, resolution, duration) read again
+- Extract audio and Convert to GIF outputs no longer count towards "saved" totals
+- Output names: characters Windows doesn't allow (`: * ? " < > |`) are replaced, `..` and path separators can't move output outside the chosen folder, an empty subfolder name falls back to `compressed`, and `{date}` uses your local time
+- Stopping one file no longer counts as an encoder failure: it doesn't retry in software, turn off hardware encoding, or add a failed entry to history
+- Stop and Cancel All can no longer miss a job that was just starting, and Extract audio and Convert to GIF work again after a Cancel All
+- When the original is kept because the output was larger, it is copied safely (a failed copy keeps the compressed file), and an output name is never reused after `_999`
+- Image jobs that fail clean up their partial output and show the error instead of leaving the row stuck
+- Pasting files from the clipboard on Windows reads the real file list, and temporary clipboard images are cleaned up
+- Image quality and resize values are validated; folder scans stop at 32 levels deep and 10,000 files
+- The update notice keeps the update installable after it hides itself, the Thumbnail preset shows its resize box ticked, the Opus option shows its `.ogg` extension, and a batch where every file failed shows the failure count
+- Space no longer starts a batch while a menu, button or dialog has focus, or when the key is held down
+
 ## [1.2.1] — 2026-09-24
+
 
 ### Performance
 
