@@ -9,7 +9,9 @@ pub mod types;
 mod utils;
 mod validate;
 
-use state::{AppState, CancelFlag, HwEncoders, NativeJobs, ProbeSemaphore, ThumbnailSemaphore};
+use state::{
+    AppState, CancelFlag, HwEncoders, NativeJobs, PauseFlag, ProbeSemaphore, ThumbnailSemaphore,
+};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WindowEvent};
@@ -35,6 +37,7 @@ pub fn run() {
         .manage(Mutex::new(AppState::default()))
         .manage(HwEncoders::default())
         .manage(CancelFlag::default())
+        .manage(PauseFlag::default())
         .manage(NativeJobs::default())
         .manage(ThumbnailSemaphore(Arc::new(tokio::sync::Semaphore::new(4))))
         .manage(ProbeSemaphore(Arc::new(tokio::sync::Semaphore::new(6))))
@@ -70,6 +73,8 @@ pub fn run() {
             commands::video::cancel_compression,
             commands::queue::cancel_all,
             commands::queue::reset_cancel,
+            commands::queue::pause_queue,
+            commands::queue::resume_queue,
             commands::image::compress_images_batch,
             commands::probe::probe_files_batch,
             commands::paths::get_default_output_dir,

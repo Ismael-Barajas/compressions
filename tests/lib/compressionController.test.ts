@@ -46,6 +46,9 @@ const commands = {
   cancelCompression: vi.fn(() => Promise.resolve()),
   cancelAll: vi.fn(() => Promise.resolve()),
   resetCancel: vi.fn(() => Promise.resolve()),
+  pauseQueue: vi.fn(() => Promise.resolve()),
+  resumeQueue: vi.fn(() => Promise.resolve()),
+  scanPaths: vi.fn((paths: string[]) => Promise.resolve(paths)),
   clearThumbnailCache: vi.fn(() => Promise.resolve()),
 };
 vi.mock("../../src/lib/commands", () => commands);

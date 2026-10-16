@@ -53,6 +53,14 @@ export async function resetCancel(): Promise<void> {
   return invoke("reset_cancel");
 }
 
+export async function pauseQueue(): Promise<void> {
+  return invoke("pause_queue");
+}
+
+export async function resumeQueue(): Promise<void> {
+  return invoke("resume_queue");
+}
+
 export async function probeFilesBatch(
   paths: string[],
   onResult: (event: ProbeEvent) => void,

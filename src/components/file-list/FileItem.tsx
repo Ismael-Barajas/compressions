@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Video, Image, FileText, X, CheckCircle, AlertCircle, Loader2, StopCircle, RotateCcw, Music, Film } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { QueuedFile } from "../../types/compression";
-import { formatFileSize, getSavingsPercent } from "../../lib/fileUtils";
+import { formatFileSize, getSavingsPercent, keptOriginal } from "../../lib/fileUtils";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
 import { AudioWaveProgress } from "./AudioWaveProgress";
@@ -112,8 +112,16 @@ export const FileItem = memo(function FileItem({ file, showThumbnails }: FileIte
             </span>
           );
         }
-        return file.result.outputSize >= file.result.inputSize ? (
-          <span style={{ color: "var(--text-muted)" }}>Already optimized</span>
+        if (keptOriginal(file.result)) {
+          return <span style={{ color: "var(--text-muted)" }}>Already optimized</span>;
+        }
+        // A format conversion can come out larger; it is kept because the user
+        // asked for that format.
+        const grew = file.result.outputSize > file.result.inputSize;
+        return grew ? (
+          <span style={{ color: "var(--text-muted)" }}>
+            → {formatFileSize(file.result.outputSize)} (+{-getSavingsPercent(file.result.inputSize, file.result.outputSize)}%)
+          </span>
         ) : (
           <span style={{ color: "var(--success)" }}>
             → {formatFileSize(file.result.outputSize)} ({getSavingsPercent(file.result.inputSize, file.result.outputSize)}%)

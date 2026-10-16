@@ -53,9 +53,15 @@ function progress(jobId: string, percent: number): ProgressPayload {
 
 const store = () => useCompressionStore.getState();
 
-function result(jobId: string, inputSize: number, outputSize: number): CompressionResult {
+function result(
+  jobId: string,
+  inputSize: number,
+  outputSize: number,
+  inputPath = "/in.mp4",
+  outputPath = "/out.mp4",
+): CompressionResult {
   return {
-    jobId, inputPath: "/in", outputPath: "/out", inputSize, outputSize,
+    jobId, inputPath, outputPath, inputSize, outputSize,
     durationMs: 1, success: true, error: null,
   };
 }
@@ -261,7 +267,7 @@ describe("lane summaries", () => {
     expect(store().summary).toMatchObject({ savedIn: 1000, savedOut: 400, keptOriginal: 0 });
 
     // Keep-original-if-larger reports outputSize === inputSize.
-    store().markComplete("job-b", result("job-b", 500, 500));
+    store().markComplete("job-b", result("job-b", 500, 500, "/saved.png", "/saved_c.png"));
     expectConsistent();
     expect(store().summary).toMatchObject({ savedIn: 1500, savedOut: 900, keptOriginal: 1 });
 
@@ -272,6 +278,21 @@ describe("lane summaries", () => {
     store().retryFile(a.id);
     expectConsistent();
     expect(store().summary).toMatchObject({ savedIn: 0, savedOut: 0, keptOriginal: 0 });
+  });
+
+  it("does not count tool conversions as savings or larger conversions as kept originals", () => {
+    const v = makeFile();
+    const img = makeFile({ mediaType: "image", path: "/conv.png" });
+    store().addFiles([v, img]);
+    store().setFileStatus(v.id, "processing", "job-v");
+    store().setFileStatus(img.id, "processing", "job-i");
+
+    // Extract audio: a 1000-byte video becomes a 50-byte MP3. Not a saving.
+    store().markComplete("job-v", result("job-v", 1000, 50, "/in.mp4", "/in_compressed.mp3"));
+    // PNG → JPEG that came out larger: kept as JPEG, not "kept original".
+    store().markComplete("job-i", result("job-i", 100, 120, "/conv.png", "/conv_c.jpeg"));
+    expectConsistent();
+    expect(store().summary).toMatchObject({ savedIn: 100, savedOut: 120, keptOriginal: 0 });
   });
 
   it("a progress tick only replaces the touched lane object", () => {

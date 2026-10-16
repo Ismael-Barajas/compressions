@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { clearThumbnailCache } from "../lib/commands";
+import { getMediaType, keptOriginal } from "../lib/fileUtils";
 import type {
   QueuedFile,
   VideoOptions,
@@ -124,9 +125,12 @@ const EMPTY_SUMMARY: FilesSummary = {
   keptOriginal: 0,
 };
 
-/** The result a file contributes to savedIn/savedOut/keptOriginal, if any. */
+/** The result a file contributes to savedIn/savedOut/keptOriginal, if any. Tool
+ * conversions (a video's extracted audio or GIF) are not compression savings. */
 function countedResult(f: QueuedFile) {
-  return f.status === "complete" ? f.result : undefined;
+  if (f.status !== "complete" || !f.result) return undefined;
+  const isToolOutput = getMediaType(f.result.outputPath) !== f.mediaType;
+  return isToolOutput ? undefined : f.result;
 }
 
 export function deriveSummary(files: QueuedFile[]): FilesSummary {
@@ -145,7 +149,7 @@ export function deriveSummary(files: QueuedFile[]): FilesSummary {
     if (result) {
       s.savedIn += result.inputSize;
       s.savedOut += result.outputSize;
-      if (result.outputSize >= result.inputSize) s.keptOriginal += 1;
+      if (keptOriginal(result)) s.keptOriginal += 1;
     }
   }
   return s;
@@ -352,12 +356,12 @@ function summaryAfterTransition(
     if (prevResult) {
       s.savedIn -= prevResult.inputSize;
       s.savedOut -= prevResult.outputSize;
-      if (prevResult.outputSize >= prevResult.inputSize) s.keptOriginal -= 1;
+      if (keptOriginal(prevResult)) s.keptOriginal -= 1;
     }
     if (nextResult) {
       s.savedIn += nextResult.inputSize;
       s.savedOut += nextResult.outputSize;
-      if (nextResult.outputSize >= nextResult.inputSize) s.keptOriginal += 1;
+      if (keptOriginal(nextResult)) s.keptOriginal += 1;
     }
   }
   return s;

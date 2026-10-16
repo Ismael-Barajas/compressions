@@ -1,8 +1,8 @@
 use tauri::{ipc::Channel, AppHandle, Manager, State};
 
 use crate::commands::job::{
-    finish_job, prepare_job, resolve_duration, run_batch, run_sidecar, send_started,
-    ProgressTarget, SidecarSpec,
+    ffmpeg_failure_message, finish_job, prepare_job, resolve_duration, run_batch, run_sidecar,
+    send_started, ProgressTarget, SidecarSpec,
 };
 use crate::ffmpeg::args::build_video_args;
 use crate::state::{AppState, HwEncoders};
@@ -89,7 +89,7 @@ pub async fn compress_video_inner(
             sidecar: "ffmpeg",
             args: &args,
             progress: Some(ProgressTarget::full(total_duration, on_progress)),
-            capture_stderr: false,
+            capture_output: false,
         },
     )
     .await?;
@@ -102,10 +102,7 @@ pub async fn compress_video_inner(
         outcome.cancelled,
         crate::commands::queue::is_cancelled(app),
     ) {
-        if let Some(ref hw) = hw_encoder {
-            disable_hw_encoder(app, hw);
-        }
-        tracing::warn!("HW encoder failed, falling back to software");
+        tracing::warn!("HW encoder failed, retrying this file in software");
         if let Err(e) = tokio::fs::remove_file(&ctx.output).await {
             tracing::warn!(path = %ctx.output, error = %e, "Failed to remove partial HW output");
         }
@@ -118,14 +115,26 @@ pub async fn compress_video_inner(
                 sidecar: "ffmpeg",
                 args: &sw_args,
                 progress: Some(ProgressTarget::full(total_duration, on_progress)),
-                capture_stderr: false,
+                capture_output: false,
             },
         )
         .await?;
+
+        // Only blame the HW encoder when software succeeds on the same input. If both
+        // fail, the file is the problem (corrupt, empty, unsupported) and the GPU
+        // encoder must stay enabled for the rest of the session.
+        if outcome.exit_code == Some(0) {
+            if let Some(ref hw) = hw_encoder {
+                disable_hw_encoder(app, hw);
+            }
+        } else {
+            tracing::info!(
+                "Software encode failed too; the input is at fault, HW encoder stays enabled"
+            );
+        }
     }
 
-    let error = (outcome.exit_code != Some(0))
-        .then(|| format!("FFmpeg exited with code {:?}", outcome.exit_code));
+    let error = (outcome.exit_code != Some(0)).then(|| ffmpeg_failure_message(outcome.exit_code));
     Ok(finish_job(
         app,
         &ctx,

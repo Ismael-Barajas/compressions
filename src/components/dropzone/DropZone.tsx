@@ -1,13 +1,13 @@
 import { Upload, FolderOpen } from "lucide-react";
 import { useCompressionStore } from "../../stores/compressionStore";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
-import { scanPaths } from "../../lib/commands";
+import { scanForQueue } from "../../lib/scanForQueue";
 import { dialogFilters } from "../../lib/mediaTypes";
 
 async function addResolvedPaths(paths: string[]) {
   let resolvedPaths: string[];
   try {
-    resolvedPaths = await scanPaths(paths);
+    resolvedPaths = await scanForQueue(paths);
   } catch (err) {
     console.error("scanPaths failed:", err);
     return;

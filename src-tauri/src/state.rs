@@ -18,6 +18,12 @@ pub struct AppState {
 #[derive(Default)]
 pub struct CancelFlag(pub Arc<AtomicBool>);
 
+/// Queue pause flag. Set by `pause_queue`, cleared by `resume_queue` and at the start
+/// of every fresh drain. Batch runners check it before starting each file, so Pause
+/// lets running files finish but starts nothing new.
+#[derive(Default)]
+pub struct PauseFlag(pub Arc<AtomicBool>);
+
 /// Hardware encoders detected at startup. Read-heavy, written once.
 #[derive(Default)]
 pub struct HwEncoders(pub RwLock<HashSet<String>>);

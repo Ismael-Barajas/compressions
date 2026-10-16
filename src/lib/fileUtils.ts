@@ -1,4 +1,11 @@
-import type { AudioCompressionFormat, MediaType, OutputMode, QueuedFile } from "../types/compression";
+import type {
+  AudioCompressionFormat,
+  CompressionResult,
+  MediaType,
+  OutputMode,
+  QueuedFile,
+  VideoOptions,
+} from "../types/compression";
 import { mediaTypeForExtension } from "./mediaTypes";
 
 export function getMediaType(filePath: string): MediaType | null {
@@ -18,9 +25,38 @@ function joinSeparator(path: string): string {
 }
 
 /** Strip path separators and `..` so a value can only ever name a single
- * file/folder inside the intended directory. */
+ * file/folder inside the intended directory, plus the characters Windows forbids
+ * in names (a `:` would otherwise write into a hidden NTFS stream). */
 function sanitizePathSegment(value: string): string {
-  return value.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+  return (
+    value
+      .replace(/[/\\]/g, "_")
+      .replace(/\.\./g, "_")
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>:"|?*\u0000-\u001f]/g, "_")
+  );
+}
+
+/** Lower-cased extension with `.jpg`/`.tif` folded into `.jpeg`/`.tiff`. */
+function normalizedExtension(path: string): string {
+  const name = getFileName(path);
+  const dot = name.lastIndexOf(".");
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+  if (ext === "jpg") return "jpeg";
+  if (ext === "tif") return "tiff";
+  return ext;
+}
+
+/** True when the output kept the input's file format (same as the backend's
+ * keep-original rule: only a same-format output is ever swapped for the original). */
+export function isSameFormat(inputPath: string, outputPath: string): boolean {
+  const ext = normalizedExtension(inputPath);
+  return ext !== "" && ext === normalizedExtension(outputPath);
+}
+
+/** The backend replaced the output with a copy of the original (it was no smaller). */
+export function keptOriginal(result: CompressionResult): boolean {
+  return result.outputSize >= result.inputSize && isSameFormat(result.inputPath, result.outputPath);
 }
 
 export function getFileName(filePath: string): string {
@@ -146,7 +182,8 @@ export function resolveOutputDir(
   switch (settings.outputMode) {
     case "subfolder": {
       // The subfolder is a single directory name, never a relative path.
-      const safeSubfolder = sanitizePathSegment(settings.subfolderName);
+      // An emptied field falls back to the placeholder name.
+      const safeSubfolder = sanitizePathSegment(settings.subfolderName.trim()) || "compressed";
       return `${parentDir}${joinSeparator(parentDir)}${safeSubfolder}`;
     }
     case "customDir":
@@ -167,6 +204,30 @@ export function resolveImageOutputFormat(format: string, inputPath: string): str
   if (ext === ".gif") return "gif";
   if (format !== "Original") return format.toLowerCase();
   return KEEP_IMAGE_EXTENSIONS.has(ext) ? undefined : "png";
+}
+
+/**
+ * Codec pairs each video container accepts, from muxing every pair through the
+ * bundled FFmpeg. Containers not listed (mp4, mkv, flv, ts) accept all of them.
+ * Copy audio is not checked: its codec depends on the source.
+ */
+const CONTAINER_ACCEPTS: Record<string, (o: VideoOptions) => boolean> = {
+  ".webm": (o) => o.codec === "AV1" && (o.audioCodec === "Opus" || o.audioCodec === "None"),
+  ".mov": (o) => o.codec !== "AV1" && o.audioCodec !== "Opus",
+  ".m4v": (o) => o.codec === "H264" && o.audioCodec !== "Opus",
+  ".avi": (o) => o.audioCodec !== "Opus",
+  ".wmv": (o) => o.codec !== "H265" && o.audioCodec !== "Opus",
+};
+
+/** Output format for a video: `undefined` keeps the input's container when it can
+ * hold the chosen codecs, otherwise MP4 (which holds every pair the app produces). */
+export function resolveVideoOutputFormat(
+  options: VideoOptions,
+  inputPath: string,
+): string | undefined {
+  const ext = inputPath.slice(inputPath.lastIndexOf(".")).toLowerCase();
+  const accepts = CONTAINER_ACCEPTS[ext];
+  return !accepts || accepts(options) ? undefined : "mp4";
 }
 
 /** Convert resolved file paths into QueuedFile objects, filtering unsupported types. */

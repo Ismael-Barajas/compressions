@@ -124,22 +124,36 @@ pub async fn compress_pdf_inner(
             sidecar: "gs",
             args: &args,
             progress: None,
-            capture_stderr: true,
+            capture_output: true,
         },
     )
     .await?;
 
-    let error = (outcome.exit_code != Some(0)).then(|| {
-        if outcome.stderr.trim().is_empty() {
-            format!("Ghostscript exited with code {:?}", outcome.exit_code)
-        } else {
-            outcome.stderr.trim().to_string()
-        }
-    });
+    // Ghostscript exits 0 on a file it cannot parse and writes an empty PDF; the
+    // only sign is this line, which it prints to stdout. Treat it as a failure,
+    // not a "kept original".
+    let read_no_pages = outcome.output.contains("No pages will be processed");
+    let exit_code = if read_no_pages {
+        tracing::warn!(input = %input, "Ghostscript processed no pages");
+        Some(1)
+    } else {
+        outcome.exit_code
+    };
+    let error = if read_no_pages {
+        Some("Could not read any pages: the PDF is corrupt or not a PDF".to_string())
+    } else {
+        (outcome.exit_code != Some(0)).then(|| {
+            if outcome.output.trim().is_empty() {
+                format!("Ghostscript exited with code {:?}", outcome.exit_code)
+            } else {
+                outcome.output.trim().to_string()
+            }
+        })
+    };
     Ok(finish_job(
         app,
         &ctx,
-        outcome.exit_code,
+        exit_code,
         outcome.duration_ms,
         error,
         outcome.cancelled,

@@ -3,7 +3,8 @@ import { Plus, Trash2, Play, Pause, Square, FolderOpen, LayoutGrid, LayoutList, 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCompressionStore, type FileView } from "../../stores/compressionStore";
 import { useCompression } from "../../hooks/useCompression";
-import { scanPaths, generateThumbnailsBatch } from "../../lib/commands";
+import { generateThumbnailsBatch } from "../../lib/commands";
+import { scanForQueue } from "../../lib/scanForQueue";
 import { pathsToQueuedFiles } from "../../lib/fileUtils";
 import { dialogFilters } from "../../lib/mediaTypes";
 import { FileItem } from "./FileItem";
@@ -133,7 +134,7 @@ export function FileList() {
       const selected = await open({ multiple: true, filters: dialogFilters() });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        const resolved = await scanPaths(paths);
+        const resolved = await scanForQueue(paths);
         addResolvedPaths(resolved);
       }
     } catch {
@@ -146,7 +147,7 @@ export function FileList() {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true });
       if (selected) {
-        const resolved = await scanPaths([selected as string]);
+        const resolved = await scanForQueue([selected as string]);
         addResolvedPaths(resolved);
       }
     } catch {
@@ -286,7 +287,7 @@ export function FileList() {
               title="Files already in progress finish; nothing new starts until you resume"
             >
               <Pause size={16} fill="currentColor" />
-              Pause after batch
+              Pause
             </button>
           )}
           <button

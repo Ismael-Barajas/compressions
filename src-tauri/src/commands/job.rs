@@ -8,7 +8,7 @@
 
 use std::future::Future;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::compression::progress::{ProgressParser, ProgressThrottle};
 use crate::ffmpeg::probe::probe_video_duration;
 use crate::history::storage as history;
-use crate::state::{AppState, CancelFlag};
+use crate::state::{AppState, CancelFlag, PauseFlag};
 use crate::types::{BatchEntry, CompressionResult, HistoryEntry, ProgressEvent, ProgressPayload};
 use crate::utils::OutputClaim;
 
@@ -124,14 +124,16 @@ pub struct SidecarSpec<'a> {
     /// When `Some`, stderr is parsed as FFmpeg `-progress` output and forwarded
     /// (throttled) on the target's channel.
     pub progress: Option<ProgressTarget<'a>>,
-    /// Keep the last few KB of stderr for error reporting (Ghostscript).
-    pub capture_stderr: bool,
+    /// Keep the first few KB of the child's output (stderr and stdout) for error
+    /// reporting. Ghostscript prints some errors to stdout.
+    pub capture_output: bool,
 }
 
 pub struct SidecarOutcome {
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
-    pub stderr: String,
+    /// Captured stderr + stdout when `capture_output` was set.
+    pub output: String,
     /// The user stopped this specific job (per-file Stop). Distinct from Cancel All,
     /// which is a global flag read via `queue::is_cancelled`.
     pub cancelled: bool,
@@ -175,7 +177,7 @@ pub async fn run_sidecar(
     let start = Instant::now();
     let mut parser = spec.progress.map(|t| ProgressParser::new(t.total_duration));
     let mut throttle = ProgressThrottle::default();
-    let mut stderr_tail = String::new();
+    let mut captured = String::new();
     let mut exit_code = None;
     let mut terminated = false;
 
@@ -200,15 +202,13 @@ pub async fn run_sidecar(
                         }
                     }
                 }
-                if spec.capture_stderr && stderr_tail.len() < STDERR_CAP {
-                    let remaining = STDERR_CAP - stderr_tail.len();
-                    if line.len() <= remaining {
-                        stderr_tail.push_str(&line);
-                        stderr_tail.push('\n');
-                    } else {
-                        stderr_tail.push_str(truncate_at_char_boundary(&line, remaining));
-                        stderr_tail.push_str("... [truncated]");
-                    }
+                if spec.capture_output {
+                    capture_line(&mut captured, &line);
+                }
+            }
+            CommandEvent::Stdout(bytes) => {
+                if spec.capture_output {
+                    capture_line(&mut captured, &String::from_utf8_lossy(&bytes));
                 }
             }
             CommandEvent::Terminated(status) => {
@@ -229,9 +229,24 @@ pub async fn run_sidecar(
     Ok(SidecarOutcome {
         exit_code,
         duration_ms: start.elapsed().as_millis() as u64,
-        stderr: stderr_tail,
+        output: captured,
         cancelled,
     })
+}
+
+/// Append one line of child output, up to `STDERR_CAP` bytes in total.
+fn capture_line(captured: &mut String, line: &str) {
+    if captured.len() >= STDERR_CAP {
+        return;
+    }
+    let remaining = STDERR_CAP - captured.len();
+    if line.len() <= remaining {
+        captured.push_str(line);
+        captured.push('\n');
+    } else {
+        captured.push_str(truncate_at_char_boundary(line, remaining));
+        captured.push_str("... [truncated]");
+    }
 }
 
 /// Longest prefix of `s` that is at most `max_bytes` long and ends on a char boundary.
@@ -291,7 +306,10 @@ fn kill_job(app: &AppHandle, job_id: &str) {
 }
 
 /// If the encoder produced a file larger than the input, replace it with a copy of
-/// the original so the user always gets the smaller file. Uses a filesystem reflink
+/// the original so the user always gets the smaller file. Only when the output is
+/// the same format as the input: a conversion (PNG → JPEG, MP3 → WAV, video → GIF,
+/// extracted audio) is what the user asked for, and copying the original's bytes
+/// under the new extension would produce a mislabeled file. Uses a filesystem reflink
 /// where supported (APFS, Btrfs, XFS, ReFS) so multi-GB videos are cloned in
 /// milliseconds; falls back to a regular copy. Runs off the async runtime.
 ///
@@ -305,6 +323,10 @@ pub async fn keep_original_if_larger(
     output_size: u64,
 ) -> u64 {
     if input_size == 0 || output_size <= input_size {
+        return output_size;
+    }
+    if !same_format(input, output) {
+        tracing::info!(input = %input, output = %output, "Converted output is larger than the input; keeping it (different format)");
         return output_size;
     }
     let input_owned = input.to_string();
@@ -331,6 +353,41 @@ pub async fn keep_original_if_larger(
             tracing::warn!(error = %e, "Join error copying original");
             output_size
         }
+    }
+}
+
+/// True when both paths have the same file format by extension (case-insensitive,
+/// treating `.jpg`/`.jpeg` and `.tif`/`.tiff` as one format).
+fn same_format(a: &str, b: &str) -> bool {
+    fn normalized_ext(path: &str) -> Option<String> {
+        let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+        Some(match ext.as_str() {
+            "jpg" => "jpeg".to_string(),
+            "tif" => "tiff".to_string(),
+            _ => ext,
+        })
+    }
+    match (normalized_ext(a), normalized_ext(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Plain-language reason for a failed FFmpeg run. FFmpeg exits with negated AVERROR
+/// codes, which mean nothing to a user as raw numbers.
+pub fn ffmpeg_failure_message(exit_code: Option<i32>) -> String {
+    match exit_code {
+        // AVERROR_INVALIDDATA ("INDA")
+        Some(-1094995529) => {
+            "Could not read the file: it is corrupt or not a supported format".to_string()
+        }
+        // AVERROR(EINVAL): the muxer/encoder refused the settings, or the requested
+        // stream (e.g. audio when extracting) does not exist.
+        Some(-22) => "FFmpeg could not apply these settings to this file (unsupported codec for the container, or no matching audio/video track)".to_string(),
+        Some(-2) => "File not found".to_string(),
+        Some(-13) => "Permission denied".to_string(),
+        Some(code) => format!("FFmpeg failed (exit code {})", code),
+        None => "FFmpeg was stopped before it finished".to_string(),
     }
 }
 
@@ -372,7 +429,10 @@ pub async fn finish_job(
             Some(
                 error_detail
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| format!("Process exited with code {:?}", exit_code)),
+                    .unwrap_or_else(|| match exit_code {
+                        Some(code) => format!("Process exited with code {}", code),
+                        None => "Process was stopped before it finished".to_string(),
+                    }),
             )
         },
     };
@@ -433,9 +493,27 @@ pub fn single_threaded_batch_concurrency(cap: usize) -> usize {
         .clamp(1, cap)
 }
 
+/// While the queue is paused, hold off starting the next file. Jobs already running
+/// finish normally. Cancel All releases the wait.
+async fn wait_while_paused(pause: &AtomicBool, cancel: &AtomicBool) {
+    let mut logged = false;
+    while pause.load(Ordering::SeqCst) && !cancel.load(Ordering::SeqCst) {
+        if !logged {
+            tracing::info!("Queue paused; waiting before starting the next file");
+            logged = true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if logged {
+        tracing::info!("Queue resumed");
+    }
+}
+
 /// Run `job` for every entry with at most `max_concurrent` in flight. Results are
-/// returned in input order. Honors `CancelFlag`: entries that have not started when
-/// Cancel All fires are skipped (reported as failed, cancelled).
+/// returned in input order and entries start in input order. Honors `PauseFlag`
+/// (no new entry starts while paused) and `CancelFlag` (entries that have not
+/// started when Cancel All fires are dropped from the results; the frontend has
+/// already reset them to queued).
 pub async fn run_batch<F, Fut>(
     app: &AppHandle,
     files: Vec<BatchEntry>,
@@ -453,36 +531,33 @@ where
         .map(|s| s.0.clone())
         .unwrap_or_default();
 
+    let pause_flag = app
+        .try_state::<PauseFlag>()
+        .map(|s| s.0.clone())
+        .unwrap_or_default();
+
+    // Slots are taken here, in input order, before each task is spawned. Spawning
+    // every task up front and letting them race for the semaphore does not keep
+    // order (Tokio runs the most recently spawned task first), which broke the
+    // frontend's smallest-first sort for videos.
     let mut handles = Vec::with_capacity(files.len());
     let mut entry_paths = Vec::with_capacity(files.len());
     for entry in files {
+        let Ok(permit) = Arc::clone(&semaphore).acquire_owned().await else {
+            break;
+        };
+        wait_while_paused(&pause_flag, &cancel_flag).await;
         if cancel_flag.load(Ordering::SeqCst) {
+            tracing::info!(input = %entry.input, "Cancel All: not starting remaining batch entries");
             break;
         }
         let app = app.clone();
         let job = Arc::clone(&job);
-        let sem = Arc::clone(&semaphore);
-        let cancel = Arc::clone(&cancel_flag);
-        let input_path = entry.input.clone();
-        let output_path = entry.output.clone();
+        entry_paths.push((entry.input.clone(), entry.output.clone()));
         handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
-            // Re-check after waiting for a permit: the user may have cancelled meanwhile.
-            if cancel.load(Ordering::SeqCst) {
-                return Ok(CompressionResult {
-                    job_id: Uuid::new_v4().to_string(),
-                    input_path: entry.input.clone(),
-                    output_path: entry.output.clone(),
-                    input_size: 0,
-                    output_size: 0,
-                    duration_ms: 0,
-                    success: false,
-                    error: Some("Cancelled".to_string()),
-                });
-            }
+            let _permit = permit;
             job(app, entry).await
         }));
-        entry_paths.push((input_path, output_path));
     }
 
     let mut results = Vec::with_capacity(handles.len());
@@ -602,6 +677,43 @@ mod tests {
 
         assert_eq!(size, 5);
         assert_eq!(std::fs::read(&output).unwrap(), b"small");
+    }
+
+    #[tokio::test]
+    async fn keep_original_never_relabels_a_conversion() {
+        // PNG input, larger JPEG output: the JPEG must stay a JPEG.
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.png");
+        let output = dir.path().join("out.jpeg");
+        std::fs::write(&input, b"png").unwrap();
+        std::fs::write(&output, b"larger jpeg bytes").unwrap();
+
+        let size =
+            keep_original_if_larger(input.to_str().unwrap(), output.to_str().unwrap(), 3, 17).await;
+
+        assert_eq!(size, 17);
+        assert_eq!(std::fs::read(&output).unwrap(), b"larger jpeg bytes");
+    }
+
+    #[test]
+    fn same_format_normalizes_extension_aliases() {
+        assert!(same_format("a/photo.JPG", "b/photo_compressed.jpeg"));
+        assert!(same_format("scan.tif", "scan_c.TIFF"));
+        assert!(same_format("clip.mp4", "clip_compressed.mp4"));
+        assert!(!same_format("song.mp3", "song_compressed.wav"));
+        assert!(!same_format("clip.mp4", "clip_compressed.gif"));
+        assert!(!same_format("noext", "noext_compressed"));
+    }
+
+    #[test]
+    fn ffmpeg_failure_message_explains_common_codes() {
+        assert!(ffmpeg_failure_message(Some(-1094995529)).contains("corrupt"));
+        assert!(ffmpeg_failure_message(Some(-22)).contains("settings"));
+        assert_eq!(
+            ffmpeg_failure_message(Some(1)),
+            "FFmpeg failed (exit code 1)"
+        );
+        assert!(!ffmpeg_failure_message(None).contains("None"));
     }
 
     #[test]

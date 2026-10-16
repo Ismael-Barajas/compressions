@@ -16,6 +16,8 @@ import {
   cancelCompression,
   cancelAll as cancelAllBackend,
   resetCancel,
+  pauseQueue,
+  resumeQueue,
   type BatchEntry,
 } from "./commands";
 import { useCompressionStore } from "../stores/compressionStore";
@@ -24,6 +26,7 @@ import {
   getAudioExtension,
   resolveAudioCompressionExtension,
   resolveImageOutputFormat,
+  resolveVideoOutputFormat,
   resolveOutputDir,
   templateStamp,
 } from "./fileUtils";
@@ -153,7 +156,7 @@ function compressBatchFor(type: MediaType, files: QueuedFile[]): BatchRun {
     case "video":
       return {
         files,
-        entries: entriesFor(files, () => undefined),
+        entries: entriesFor(files, (f) => resolveVideoOutputFormat(videoOptions, f.path)),
         invoke: (entries, ch) => compressVideosBatch(entries, videoOptions, ch),
       };
     case "image":
@@ -398,12 +401,17 @@ export async function convertAllToGif(): Promise<void> {
   await runToolBatch("gif", (entries, ch) => convertVideosToGifBatch(entries, gifOptions, ch));
 }
 
+// Pause is enforced in two places: the drain loop submits no new batch, and the
+// Rust batch runner starts no new file from a batch already submitted. Files
+// already running finish either way.
 export function pauseCompression(): void {
   store.getState().pauseCompression();
+  pauseQueue().catch((err) => console.warn("pause_queue failed:", err));
 }
 
 export function resumeCompression(): void {
   store.getState().resumeCompression();
+  resumeQueue().catch((err) => console.warn("resume_queue failed:", err));
 }
 
 // Stops the queue immediately: kill child processes + raise the cancel flag in
