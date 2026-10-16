@@ -7,16 +7,31 @@ export function getMediaType(filePath: string): MediaType | null {
   return mediaTypeForExtension(filePath.slice(dot));
 }
 
+/** Index of the last `/` or `\` in `path` (-1 if neither); handles mixed separators. */
+function lastSeparatorIndex(path: string): number {
+  return Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+}
+
+/** Separator to join with: whichever appears last in `path` (default `/`). */
+function joinSeparator(path: string): string {
+  return path.lastIndexOf("\\") > path.lastIndexOf("/") ? "\\" : "/";
+}
+
+/** Strip path separators and `..` so a value can only ever name a single
+ * file/folder inside the intended directory. */
+function sanitizePathSegment(value: string): string {
+  return value.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+}
+
 export function getFileName(filePath: string): string {
-  const sep = filePath.includes("\\") ? "\\" : "/";
-  return filePath.split(sep).pop() || filePath;
+  return filePath.slice(lastSeparatorIndex(filePath) + 1) || filePath;
 }
 
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   const k = 1024;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
   const size = bytes / Math.pow(k, i);
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
@@ -29,8 +44,11 @@ export function getSavingsPercent(inputSize: number, outputSize: number): number
 /** Values for the `{date}` / `{time}` template tokens. Compute once per batch so
  * every file in the batch shares the same stamp. */
 export function templateStamp(now: Date = new Date()): { date: string; time: string } {
-  const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
-  const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+  // Local date, matching the local time below (toISOString would give UTC and
+  // roll the date over near midnight).
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   return { date, time };
 }
 
@@ -40,9 +58,7 @@ export function getOutputFileName(
   template: string = "{name}_compressed",
   stamp: { date: string; time: string } = templateStamp(),
 ): string {
-  const sep = inputPath.includes("\\") ? "\\" : "/";
-  const parts = inputPath.split(sep);
-  const fileName = parts.pop() || "";
+  const fileName = getFileName(inputPath);
   const dotIndex = fileName.lastIndexOf(".");
   const name = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
   const inputExt = dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : "";
@@ -53,15 +69,18 @@ export function getOutputFileName(
       ? `.${format.toLowerCase()}`
       : inputExt;
 
-  // Sanitize name to prevent path traversal via crafted filenames
-  const safeName = name.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+  // Both the file stem and the user's template are sanitized so neither can
+  // escape the output directory. `{name}` uses a function replacer so `$&`-style
+  // patterns in a file name are inserted literally.
+  const safeName = sanitizePathSegment(name);
+  const safeTemplate = sanitizePathSegment(template);
 
-  const baseName = template
-    .replace(/\{name\}/g, safeName)
-    .replace(/\{date\}/g, stamp.date)
-    .replace(/\{time\}/g, stamp.time);
+  const baseName = safeTemplate
+    .replace(/\{name\}/g, () => safeName)
+    .replace(/\{date\}/g, () => stamp.date)
+    .replace(/\{time\}/g, () => stamp.time);
 
-  return `${baseName || name}${ext}`;
+  return `${baseName || safeName}${ext}`;
 }
 
 const AUDIO_FORMAT_EXTENSIONS: Record<string, string> = {
@@ -103,10 +122,8 @@ export function isValidMediaFile(filePath: string): boolean {
 }
 
 export function getParentDir(filePath: string): string {
-  const sep = filePath.includes("\\") ? "\\" : "/";
-  const parts = filePath.split(sep);
-  parts.pop();
-  return parts.join(sep);
+  const idx = lastSeparatorIndex(filePath);
+  return idx < 0 ? "" : filePath.slice(0, idx);
 }
 
 export function buildOutputPath(
@@ -116,9 +133,8 @@ export function buildOutputPath(
   template?: string,
   stamp?: { date: string; time: string },
 ): string {
-  const sep = outputDir.includes("\\") ? "\\" : "/";
   const outputName = getOutputFileName(inputPath, format, template, stamp);
-  return `${outputDir}${sep}${outputName}`;
+  return `${outputDir}${joinSeparator(outputDir)}${outputName}`;
 }
 
 /** Output directory for `filePath` under the given output settings. */
@@ -129,8 +145,9 @@ export function resolveOutputDir(
   const parentDir = getParentDir(filePath);
   switch (settings.outputMode) {
     case "subfolder": {
-      const sep = parentDir.includes("\\") ? "\\" : "/";
-      return `${parentDir}${sep}${settings.subfolderName}`;
+      // The subfolder is a single directory name, never a relative path.
+      const safeSubfolder = sanitizePathSegment(settings.subfolderName);
+      return `${parentDir}${joinSeparator(parentDir)}${safeSubfolder}`;
     }
     case "customDir":
       return settings.outputDir || parentDir;
@@ -144,8 +161,11 @@ export function resolveOutputDir(
 const KEEP_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"]);
 
 export function resolveImageOutputFormat(format: string, inputPath: string): string | undefined {
-  if (format !== "Original") return format.toLowerCase();
   const ext = inputPath.slice(inputPath.lastIndexOf(".")).toLowerCase();
+  // GIF inputs stay GIF regardless of the chosen format (animation is preserved;
+  // the output name is forced to .gif, so the bytes must match).
+  if (ext === ".gif") return "gif";
+  if (format !== "Original") return format.toLowerCase();
   return KEEP_IMAGE_EXTENSIONS.has(ext) ? undefined : "png";
 }
 

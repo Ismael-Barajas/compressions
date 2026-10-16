@@ -249,6 +249,11 @@ function drainQueue(): Promise<void> {
   });
 }
 
+// Synchronous re-entry guard for the drain loop. `isCompressing` only flips after
+// the `await resetCancel()` below, so a second call landing in that window (held
+// Space key, double-click) would otherwise start a second drain over the same queue.
+let draining = false;
+
 export async function startCompression(): Promise<void> {
   const { outputDir, outputMode, summary } = store.getState();
   if (summary.queued === 0) return;
@@ -258,18 +263,25 @@ export async function startCompression(): Promise<void> {
     return;
   }
 
-  store.getState().resetQueueControlFlags();
-  try {
-    await resetCancel();
-  } catch (err) {
-    console.warn("resetCancel failed (continuing):", err);
-  }
+  if (draining) return;
+  draining = true;
 
-  store.getState().startOperation();
   try {
-    await drainQueue();
+    store.getState().resetQueueControlFlags();
+    try {
+      await resetCancel();
+    } catch (err) {
+      console.warn("resetCancel failed (continuing):", err);
+    }
+
+    store.getState().startOperation();
+    try {
+      await drainQueue();
+    } finally {
+      store.getState().endOperation();
+    }
   } finally {
-    store.getState().endOperation();
+    draining = false;
   }
 }
 
@@ -283,7 +295,9 @@ export async function cancelFile(fileId: string): Promise<void> {
     } catch {
       // Process may have already finished
     }
-    store.getState().markError(file.jobId, "Cancelled by user");
+    // Only files still processing are marked cancelled: a job that completed
+    // during the IPC round-trip keeps its "complete" status.
+    store.getState().markErrorByIds([file.id], "Cancelled by user", ["processing"]);
   }
 }
 
@@ -309,6 +323,15 @@ async function runSingleTool(
     ext,
     settings.outputTemplate,
   );
+
+  // Same preamble as startCompression: a stale cancel flag in Rust would make
+  // the sidecar bail out immediately.
+  store.getState().resetQueueControlFlags();
+  try {
+    await resetCancel();
+  } catch (err) {
+    console.warn("resetCancel failed (continuing):", err);
+  }
 
   store.getState().startOperation();
   store.getState().setFileStatus(file.id, "processing", undefined);
@@ -347,6 +370,13 @@ async function runToolBatch(
     .getState()
     .files.filter((f) => f.mediaType === "video" && f.status === "queued");
   if (videoFiles.length === 0) return;
+
+  store.getState().resetQueueControlFlags();
+  try {
+    await resetCancel();
+  } catch (err) {
+    console.warn("resetCancel failed (continuing):", err);
+  }
 
   store.getState().startOperation();
   try {

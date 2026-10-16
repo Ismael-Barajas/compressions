@@ -6,6 +6,7 @@ interface UpdateToastProps {
   downloading: boolean;
   downloadProgress: number;
   onInstall: () => void;
+  /** Hides the toast only (auto-dismiss and the X button); the update stays pending. */
   onDismiss: () => void;
 }
 

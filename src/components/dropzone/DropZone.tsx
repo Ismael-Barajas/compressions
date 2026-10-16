@@ -5,7 +5,13 @@ import { scanPaths } from "../../lib/commands";
 import { dialogFilters } from "../../lib/mediaTypes";
 
 async function addResolvedPaths(paths: string[]) {
-  const resolvedPaths = await scanPaths(paths);
+  let resolvedPaths: string[];
+  try {
+    resolvedPaths = await scanPaths(paths);
+  } catch (err) {
+    console.error("scanPaths failed:", err);
+    return;
+  }
   const newFiles = pathsToQueuedFiles(resolvedPaths);
   if (newFiles.length > 0) {
     useCompressionStore.getState().addFiles(newFiles);
@@ -19,7 +25,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true });
       if (selected) {
-        addResolvedPaths([selected as string]);
+        await addResolvedPaths([selected as string]);
       }
     } catch {
       // Dialog cancelled or not in Tauri
@@ -32,7 +38,7 @@ export function DropZone({ isDragOver }: { isDragOver?: boolean }) {
       const selected = await open({ multiple: true, filters: dialogFilters() });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        addResolvedPaths(paths);
+        await addResolvedPaths(paths);
       }
     } catch {
       // Dialog cancelled or not in Tauri

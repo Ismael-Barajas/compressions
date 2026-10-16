@@ -17,9 +17,15 @@ interface UpdateState {
   error: string | null;
   /** Set once the automatic startup check has run. */
   autoChecked: boolean;
+  /** Toast closed (auto-dismiss or X). The update itself stays available so the
+   * header badge and `installUpdate` keep working. Reset when a new update is found. */
+  toastDismissed: boolean;
 
   checkForUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
+  /** Hide the toast only. */
+  hideToast: () => void;
+  /** Forget the pending update entirely. */
   dismiss: () => void;
 }
 
@@ -34,6 +40,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   downloadProgress: 0,
   error: null,
   autoChecked: false,
+  toastDismissed: false,
 
   checkForUpdate: async () => {
     if (get().checking) return;
@@ -47,6 +54,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           updateAvailable: true,
           updateVersion: update.version,
           updateNotes: update.body ?? null,
+          toastDismissed: false,
         });
       } else {
         pendingUpdate = null;
@@ -96,12 +104,14 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
+  hideToast: () => set({ toastDismissed: true }),
+
+  // Does not touch `checking`: that flag belongs to an in-flight checkForUpdate.
   dismiss: () => {
     set({
       updateAvailable: false,
       updateVersion: null,
       updateNotes: null,
-      checking: false,
       downloading: false,
       downloadProgress: 0,
       error: null,

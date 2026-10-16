@@ -48,6 +48,7 @@ async fn run_audio_job(
         outcome.exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)

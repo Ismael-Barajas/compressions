@@ -6,7 +6,29 @@ export function ResultsSummary() {
   const completedFiles = files.filter((f) => f.status === "complete" && f.result?.success);
   const errorFiles = files.filter((f) => f.status === "error");
 
-  if (completedFiles.length === 0) return null;
+  if (completedFiles.length === 0 && errorFiles.length === 0) return null;
+
+  const failedLine = errorFiles.length > 0 && (
+    <div className="font-data text-center" style={{ color: "var(--error)" }}>
+      {errorFiles.length} file{errorFiles.length !== 1 ? "s" : ""} failed
+    </div>
+  );
+
+  // Nothing succeeded: a compact failure line instead of a 0% savings panel.
+  if (completedFiles.length === 0) {
+    return (
+      <div
+        className="mt-4 border p-3"
+        style={{
+          borderColor: "var(--border)",
+          backgroundColor: "var(--bg-secondary)",
+          borderLeft: "2px solid var(--error)",
+        }}
+      >
+        {failedLine}
+      </div>
+    );
+  }
 
   const totalInput = completedFiles.reduce((sum, f) => sum + (f.result?.inputSize ?? 0), 0);
   const totalOutput = completedFiles.reduce((sum, f) => sum + (f.result?.outputSize ?? 0), 0);
@@ -61,11 +83,7 @@ export function ResultsSummary() {
         </div>
       )}
 
-      {errorFiles.length > 0 && (
-        <div className="font-data mt-2 text-center" style={{ color: "var(--error)" }}>
-          {errorFiles.length} file{errorFiles.length !== 1 ? "s" : ""} failed
-        </div>
-      )}
+      {failedLine && <div className="mt-2">{failedLine}</div>}
     </div>
   );
 }

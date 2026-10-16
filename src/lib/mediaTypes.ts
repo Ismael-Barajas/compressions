@@ -32,7 +32,8 @@ function buildLookup(media: SupportedMedia): Map<string, MediaType> {
   return map;
 }
 
-/** Fetch the backend's list once; later calls return the cached promise. */
+/** Fetch the backend's list once; later calls return the cached promise.
+ * A failed fetch is not memoized: the next call retries, this one gets the fallback. */
 export function loadSupportedMedia(): Promise<SupportedMedia> {
   if (!loaded) {
     loaded = getSupportedMedia()
@@ -41,7 +42,11 @@ export function loadSupportedMedia(): Promise<SupportedMedia> {
         typeByExt = buildLookup(media);
         return media;
       })
-      .catch(() => current);
+      .catch((err) => {
+        console.warn("get_supported_media failed; using fallback list:", err);
+        loaded = null;
+        return current;
+      });
   }
   return loaded;
 }

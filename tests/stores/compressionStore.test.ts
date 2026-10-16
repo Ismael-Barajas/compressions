@@ -78,6 +78,19 @@ describe("compressionStore", () => {
       useCompressionStore.getState().addFiles([f2]);
       expect(useCompressionStore.getState().files).toHaveLength(2);
     });
+
+    it("treats Windows paths as case-insensitive with either separator", () => {
+      const f1 = makeFile({ path: "C:\\A.mp4" });
+      const f2 = makeFile({ path: "c:/a.mp4" });
+      useCompressionStore.getState().addFiles([f1]);
+      useCompressionStore.getState().addFiles([f2]);
+      expect(useCompressionStore.getState().files).toHaveLength(1);
+      // Stored path is untouched.
+      expect(useCompressionStore.getState().files[0].path).toBe("C:\\A.mp4");
+      // Unix paths stay case-sensitive.
+      useCompressionStore.getState().addFiles([makeFile({ path: "/x/A.mp4" }), makeFile({ path: "/x/a.mp4" })]);
+      expect(useCompressionStore.getState().files).toHaveLength(3);
+    });
   });
 
   describe("state transitions", () => {

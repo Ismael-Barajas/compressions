@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 // Self-hosted fonts: no network request at launch, works offline, and not blocked
 // by the production CSP (which only allows 'self' for styles and fonts).
 import "@fontsource-variable/bricolage-grotesque/opsz.css";
@@ -11,6 +12,8 @@ import "./styles/globals.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

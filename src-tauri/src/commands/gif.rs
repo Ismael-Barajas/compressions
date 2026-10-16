@@ -144,6 +144,7 @@ pub async fn convert_video_to_gif_inner(
         outcome.exit_code,
         outcome.duration_ms,
         error,
+        outcome.cancelled,
         on_progress,
     )
     .await)

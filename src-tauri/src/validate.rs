@@ -2,7 +2,8 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::types::{
-    AudioCompressionOptions, AudioExtractionOptions, GifConversionOptions, PdfOptions, VideoOptions,
+    AudioCompressionOptions, AudioExtractionOptions, GifConversionOptions, ImageOptions,
+    PdfOptions, ResizeMode, VideoOptions,
 };
 
 static BITRATE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+[kKmMgG]?$").unwrap());
@@ -72,6 +73,21 @@ pub fn validate_gif_options(opts: &GifConversionOptions) -> Result<(), String> {
     validate_range(opts.max_colors, 2, 256, "max_colors")?;
     if let Some(w) = opts.width {
         validate_range(w, 16, 7680, "width")?;
+    }
+    Ok(())
+}
+
+/// Image resize bound: same ceiling as video. `Fit` accepts 0 for "unconstrained";
+/// `Exact` needs a real size on both axes.
+pub fn validate_image_options(opts: &ImageOptions) -> Result<(), String> {
+    validate_range(opts.quality as u32, 1, 100, "quality")?;
+    if let Some(ref res) = opts.resize {
+        let min = match opts.resize_mode {
+            ResizeMode::Exact => 1,
+            ResizeMode::Fit => 0,
+        };
+        validate_range(res.width, min, 7680, "resize width")?;
+        validate_range(res.height, min, 7680, "resize height")?;
     }
     Ok(())
 }
@@ -175,6 +191,40 @@ mod tests {
             dither: DitherMode::Bayer,
         };
         assert!(validate_gif_options(&opts).is_err());
+    }
+
+    fn image_opts(quality: u8, resize: Option<(u32, u32)>, mode: ResizeMode) -> ImageOptions {
+        ImageOptions {
+            format: ImageFormat::WebP,
+            quality,
+            resize: resize.map(|(width, height)| Resolution { width, height }),
+            resize_mode: mode,
+            strip_metadata: true,
+        }
+    }
+
+    #[test]
+    fn valid_image_options() {
+        assert!(validate_image_options(&image_opts(80, None, ResizeMode::Fit)).is_ok());
+        assert!(validate_image_options(&image_opts(1, Some((1920, 0)), ResizeMode::Fit)).is_ok());
+        assert!(
+            validate_image_options(&image_opts(100, Some((300, 300)), ResizeMode::Exact)).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_bad_image_options() {
+        assert!(validate_image_options(&image_opts(0, None, ResizeMode::Fit)).is_err());
+        assert!(validate_image_options(&image_opts(101, None, ResizeMode::Fit)).is_err());
+        assert!(validate_image_options(&image_opts(
+            80,
+            Some((100_000, 100_000)),
+            ResizeMode::Exact
+        ))
+        .is_err());
+        assert!(
+            validate_image_options(&image_opts(80, Some((0, 300)), ResizeMode::Exact)).is_err()
+        );
     }
 
     #[test]

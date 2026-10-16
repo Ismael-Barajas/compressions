@@ -33,7 +33,7 @@ pub fn compress_with_threads(
         return encode_gif(input, output, options.quality);
     }
 
-    let img = image::open(input).map_err(|e| format!("Failed to open image: {}", e))?;
+    let img = open_image_bounded(input)?;
 
     // Resize if requested
     let img = match options.resize {
@@ -48,7 +48,7 @@ pub fn compress_with_threads(
 
     match effective_format {
         ImageFormat::Jpeg => encode_jpeg(&img, input, output, options.quality, preserve),
-        ImageFormat::Png => encode_png(img, output, preserve),
+        ImageFormat::Png => encode_png(img, output, preserve, threads),
         ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
         ImageFormat::Avif => encode_avif(&img, output, options.quality, threads),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
@@ -58,6 +58,26 @@ pub fn compress_with_threads(
         ),
         ImageFormat::Original => unreachable!("resolve_for_input always returns concrete format"),
     }
+}
+
+/// Largest image edge the native pipeline will decode. Together with the image
+/// crate's default 512 MiB allocation cap this bounds memory for a hostile header.
+pub const MAX_IMAGE_EDGE: u32 = 32_768;
+
+/// `image::open` with explicit dimension limits (the crate's default only caps
+/// total allocation).
+pub fn open_image_bounded(input: &str) -> Result<DynamicImage, String> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_EDGE);
+    limits.max_image_height = Some(MAX_IMAGE_EDGE);
+    let mut reader =
+        image::ImageReader::open(input).map_err(|e| format!("Failed to open image: {}", e))?;
+    reader.limits(limits);
+    reader
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to read image header: {}", e))?
+        .decode()
+        .map_err(|e| format!("Failed to decode image: {}", e))
 }
 
 /// Target dimensions for a resize request. `Fit` treats a zero dimension as
@@ -177,7 +197,12 @@ fn copy_exif_jpeg(input: &str, data: &[u8]) -> Option<Vec<u8>> {
 /// layout instead of inflating everything to RGBA first. Takes the image by value
 /// so its buffer moves into oxipng instead of being copied (one full frame less
 /// per concurrent job).
-fn encode_png(img: DynamicImage, output: &str, preserve_metadata: bool) -> Result<(), String> {
+fn encode_png(
+    img: DynamicImage,
+    output: &str,
+    preserve_metadata: bool,
+    threads: usize,
+) -> Result<(), String> {
     use oxipng::{BitDepth, ColorType, RawImage};
 
     let (width, height) = (img.width(), img.height());
@@ -215,8 +240,14 @@ fn encode_png(img: DynamicImage, output: &str, preserve_metadata: bool) -> Resul
         oxipng::StripChunks::All
     };
 
-    let optimized = raw
-        .create_optimized_png(&opts)
+    // oxipng parallelizes over the global rayon pool; run it inside a pool sized to
+    // this job's budget so N concurrent PNG jobs do not each use every core.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.max(1))
+        .build()
+        .map_err(|e| format!("Failed to build PNG thread pool: {}", e))?;
+    let optimized = pool
+        .install(|| raw.create_optimized_png(&opts))
         .map_err(|e| format!("Failed to optimize PNG: {}", e))?;
 
     std::fs::write(output, optimized).map_err(|e| format!("Failed to write PNG: {}", e))
