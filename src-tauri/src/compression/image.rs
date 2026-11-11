@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use fast_image_resize::{FilterType as FrFilter, ResizeAlg, ResizeOptions, Resizer};
-use image::DynamicImage;
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder};
 use rgb::FromSlice;
 
 use crate::types::{ImageFormat, ImageOptions, ResizeMode};
@@ -33,23 +34,46 @@ pub fn compress_with_threads(
         return encode_gif(input, output, options.quality);
     }
 
-    let img = open_image_bounded(input)?;
-
-    // Resize if requested
-    let img = match options.resize {
-        Some(ref resize) => resize_image(img, resize.width, resize.height, &options.resize_mode)?,
-        None => img,
-    };
-
+    let decoded = decode_image_bounded(input)?;
     let preserve = !options.strip_metadata;
 
     // Resolve Original → concrete format (defensive; commands layer resolves first)
     let effective_format = options.format.resolve_for_input(input);
 
+    // EXIF goes across only when metadata is kept, and only JPEG and WebP outputs
+    // carry it. PNG gets none: its pixels are always rotated below, so a copied
+    // orientation tag would rotate it a second time.
+    let carries_exif = matches!(effective_format, ImageFormat::Jpeg | ImageFormat::WebP);
+    let exif_to_copy = if preserve && carries_exif {
+        decoded.exif
+    } else {
+        None
+    };
+
+    // A copied EXIF block keeps its orientation tag and viewers rotate for us, so
+    // the pixels stay as they are (as before). Otherwise rotate the pixels, or
+    // the output would display sideways once the tag is gone.
+    let mut img = decoded.image;
+    let needs_rotation = exif_to_copy.is_none() && decoded.orientation != Orientation::NoTransforms;
+    if needs_rotation {
+        tracing::debug!(input = %input, orientation = ?decoded.orientation, "Applying EXIF orientation to pixels");
+        img.apply_orientation(decoded.orientation);
+    }
+
+    // Resize after rotating, so a fit box means what the user sees.
+    let img = match options.resize {
+        Some(ref resize) => resize_image(img, resize.width, resize.height, &options.resize_mode)?,
+        None => img,
+    };
+
+    // The ICC profile is colour data, not personal data: kept in both strip modes.
+    let icc = decoded.icc_profile;
+
     match effective_format {
-        ImageFormat::Jpeg => encode_jpeg(&img, input, output, options.quality, preserve),
-        ImageFormat::Png => encode_png(img, output, preserve, threads),
-        ImageFormat::WebP => encode_webp(&img, input, output, options.quality, preserve),
+        ImageFormat::Jpeg => encode_jpeg(&img, output, options.quality, icc, exif_to_copy),
+        ImageFormat::Png => encode_png(img, output, icc, threads),
+        ImageFormat::WebP => encode_webp(&img, output, options.quality, icc, exif_to_copy),
+        // ravif writes no colour profile; a wide-gamut source is read as sRGB.
         ImageFormat::Avif => encode_avif(&img, output, options.quality, threads),
         ImageFormat::Gif => encode_gif(input, output, options.quality),
         ImageFormat::Heic => Err(
@@ -64,20 +88,88 @@ pub fn compress_with_threads(
 /// crate's default 512 MiB allocation cap this bounds memory for a hostile header.
 pub const MAX_IMAGE_EDGE: u32 = 32_768;
 
-/// `image::open` with explicit dimension limits (the crate's default only caps
-/// total allocation).
-pub fn open_image_bounded(input: &str) -> Result<DynamicImage, String> {
+/// A decoded image plus what its decoder knew about it.
+pub struct DecodedImage {
+    pub image: DynamicImage,
+    /// Orientation from the EXIF tag (or TIFF header). Not applied to `image`.
+    pub orientation: Orientation,
+    pub icc_profile: Option<Vec<u8>>,
+    /// Raw EXIF (TIFF structure, without the JPEG `Exif\0\0` prefix).
+    pub exif: Option<Vec<u8>>,
+}
+
+/// Decode with explicit dimension limits (the crate's default only caps total
+/// allocation), reading orientation, ICC profile and EXIF from the same decoder
+/// so the input file is read once.
+pub fn decode_image_bounded(input: &str) -> Result<DecodedImage, String> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_EDGE);
     limits.max_image_height = Some(MAX_IMAGE_EDGE);
     let mut reader =
         image::ImageReader::open(input).map_err(|e| format!("Failed to open image: {}", e))?;
-    reader.limits(limits);
-    reader
+    reader.limits(limits.clone());
+    // `into_decoder` applies the limits (the edge check happens here).
+    let mut decoder = reader
         .with_guessed_format()
         .map_err(|e| format!("Failed to read image header: {}", e))?
-        .decode()
-        .map_err(|e| format!("Failed to decode image: {}", e))
+        .into_decoder()
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    // `ImageReader::decode` also reserves the output buffer against the allocation
+    // cap before decoding; `into_decoder` does not, so do the same here.
+    limits
+        .reserve(decoder.total_bytes())
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    decoder
+        .set_limits(limits)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+
+    // Metadata is best effort: a broken profile or EXIF block must not fail the file.
+    let orientation = decoder.orientation().unwrap_or_else(|e| {
+        tracing::warn!(input = %input, error = %e, "Could not read image orientation");
+        Orientation::NoTransforms
+    });
+    let icc_profile = decoder.icc_profile().unwrap_or_else(|e| {
+        tracing::warn!(input = %input, error = %e, "Could not read ICC profile");
+        None
+    });
+    let exif = decoder.exif_metadata().unwrap_or_else(|e| {
+        tracing::warn!(input = %input, error = %e, "Could not read EXIF");
+        None
+    });
+
+    let image = DynamicImage::from_decoder(decoder)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    Ok(DecodedImage {
+        image,
+        orientation,
+        icc_profile,
+        exif,
+    })
+}
+
+/// Decode with the same limits as [`decode_image_bounded`], pixels only (no
+/// orientation applied).
+pub fn open_image_bounded(input: &str) -> Result<DynamicImage, String> {
+    decode_image_bounded(input).map(|d| d.image)
+}
+
+/// The colour space an ICC profile describes (header bytes 16..20) must match the
+/// output pixels: a CMYK or grayscale profile on RGB pixels would be misread.
+fn icc_fits(profile: &[u8], gray_output: bool) -> bool {
+    let expected: &[u8] = if gray_output { b"GRAY" } else { b"RGB " };
+    profile.get(16..20) == Some(expected)
+}
+
+/// Keep `profile` only when it describes RGB pixels (JPEG and WebP outputs are
+/// always RGB). Logs when one is dropped.
+fn rgb_icc(profile: Option<Vec<u8>>) -> Option<Vec<u8>> {
+    let profile = profile?;
+    if icc_fits(&profile, false) {
+        Some(profile)
+    } else {
+        tracing::debug!("Dropping ICC profile that does not describe RGB pixels");
+        None
+    }
 }
 
 /// Target dimensions for a resize request. `Fit` treats a zero dimension as
@@ -142,10 +234,10 @@ fn resize_image(
 
 fn encode_jpeg(
     img: &DynamicImage,
-    input: &str,
     output: &str,
     quality: u8,
-    preserve_metadata: bool,
+    icc: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
 ) -> Result<(), String> {
     // Borrow the buffer when the decoded image is already RGB8 (the common JPEG case).
     let rgb: Cow<image::RgbImage> = match img {
@@ -169,26 +261,31 @@ fn encode_jpeg(
         .finish()
         .map_err(|_| "Failed to get JPEG data".to_string())?;
 
-    if preserve_metadata {
-        if let Some(out_bytes) = copy_exif_jpeg(input, &data) {
-            return std::fs::write(output, out_bytes)
-                .map_err(|e| format!("Failed to write JPEG: {}", e));
-        }
-    }
-
+    let data = embed_jpeg_metadata(data, rgb_icc(icc), exif)?;
     std::fs::write(output, data).map_err(|e| format!("Failed to write JPEG: {}", e))
 }
 
-/// Copy the EXIF segment from `input` into the freshly encoded JPEG `data`.
-/// Returns `None` when either side cannot be parsed or the input has no EXIF.
-fn copy_exif_jpeg(input: &str, data: &[u8]) -> Option<Vec<u8>> {
-    use img_parts::ImageEXIF;
-    let input_bytes = std::fs::read(input).ok()?;
-    let src = img_parts::jpeg::Jpeg::from_bytes(input_bytes.into()).ok()?;
-    let exif = src.exif()?;
-    let mut dst = img_parts::jpeg::Jpeg::from_bytes(data.to_vec().into()).ok()?;
-    dst.set_exif(Some(exif));
-    Some(dst.encoder().bytes().to_vec())
+/// Add the ICC profile and EXIF block (either may be absent) to an encoded JPEG.
+/// An error rather than a silent fallback: the caller left the pixels unrotated
+/// because it expects the EXIF orientation tag to arrive.
+fn embed_jpeg_metadata(
+    data: Vec<u8>,
+    icc: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    use img_parts::{ImageEXIF, ImageICC};
+    if icc.is_none() && exif.is_none() {
+        return Ok(data);
+    }
+    let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(data.into())
+        .map_err(|e| format!("Failed to add JPEG metadata: {}", e))?;
+    if let Some(icc) = icc {
+        jpeg.set_icc_profile(Some(icc.into()));
+    }
+    if let Some(exif) = exif {
+        jpeg.set_exif(Some(exif.into()));
+    }
+    Ok(jpeg.encoder().bytes().to_vec())
 }
 
 /// Encode PNG by handing raw pixels straight to oxipng. The previous pipeline
@@ -200,7 +297,7 @@ fn copy_exif_jpeg(input: &str, data: &[u8]) -> Option<Vec<u8>> {
 fn encode_png(
     img: DynamicImage,
     output: &str,
-    preserve_metadata: bool,
+    icc: Option<Vec<u8>>,
     threads: usize,
 ) -> Result<(), String> {
     use oxipng::{BitDepth, ColorType, RawImage};
@@ -230,15 +327,24 @@ fn encode_png(
         ),
     };
 
-    let raw = RawImage::new(width, height, color_type, BitDepth::Eight, data)
+    let gray_output = matches!(
+        color_type,
+        ColorType::Grayscale { .. } | ColorType::GrayscaleAlpha
+    );
+    let mut raw = RawImage::new(width, height, color_type, BitDepth::Eight, data)
         .map_err(|e| format!("Failed to build PNG image: {}", e))?;
+    match icc {
+        Some(profile) if icc_fits(&profile, gray_output) => raw.add_icc_profile(&profile),
+        Some(_) => tracing::debug!("Dropping ICC profile that does not match the PNG pixels"),
+        None => {}
+    }
 
+    // A raw image carries no chunks except the iCCP added above, so the strip
+    // setting only decides that one. `Safe` keeps display chunks (iCCP, sRGB) in
+    // both strip modes, and lets oxipng swap an sRGB-equivalent profile for the
+    // small sRGB chunk.
     let mut opts = oxipng::Options::from_preset(2);
-    opts.strip = if preserve_metadata {
-        oxipng::StripChunks::None
-    } else {
-        oxipng::StripChunks::All
-    };
+    opts.strip = oxipng::StripChunks::Safe;
 
     // oxipng parallelizes over the global rayon pool; run it inside a pool sized to
     // this job's budget so N concurrent PNG jobs do not each use every core.
@@ -255,10 +361,10 @@ fn encode_png(
 
 fn encode_webp(
     img: &DynamicImage,
-    input: &str,
     output: &str,
     quality: u8,
-    preserve_metadata: bool,
+    icc: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
 ) -> Result<(), String> {
     // The webp crate only accepts RGB8/RGBA8; grayscale inputs used to fail here.
     let rgb_img: Cow<DynamicImage> = match img {
@@ -272,24 +378,66 @@ fn encode_webp(
         .map_err(|e| format!("Failed to create WebP encoder: {}", e))?;
     let encoded = encoder.encode(quality as f32);
 
-    if preserve_metadata {
-        if let Some(out_bytes) = copy_exif_webp(input, &encoded) {
-            return std::fs::write(output, out_bytes)
-                .map_err(|e| format!("Failed to write WebP: {}", e));
-        }
+    let icc = rgb_icc(icc);
+    if icc.is_none() && exif.is_none() {
+        return std::fs::write(output, &*encoded)
+            .map_err(|e| format!("Failed to write WebP: {}", e));
     }
-
-    std::fs::write(output, &*encoded).map_err(|e| format!("Failed to write WebP: {}", e))
+    let data = embed_webp_metadata(&encoded, icc, exif)?;
+    std::fs::write(output, data).map_err(|e| format!("Failed to write WebP: {}", e))
 }
 
-fn copy_exif_webp(input: &str, data: &[u8]) -> Option<Vec<u8>> {
-    use img_parts::ImageEXIF;
-    let input_bytes = std::fs::read(input).ok()?;
-    let src = img_parts::webp::WebP::from_bytes(input_bytes.into()).ok()?;
-    let exif = src.exif()?;
-    let mut dst = img_parts::webp::WebP::from_bytes(data.to_vec().into()).ok()?;
-    dst.set_exif(Some(exif));
-    Some(dst.encoder().bytes().to_vec())
+/// Add the ICC profile and EXIF block (either may be absent) to an encoded WebP.
+/// An error rather than a silent fallback, for the same reason as JPEG.
+fn embed_webp_metadata(
+    data: &[u8],
+    icc: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    use img_parts::webp::{WebP, CHUNK_EXIF, CHUNK_ICCP, CHUNK_VP8X};
+    use img_parts::{ImageEXIF, ImageICC};
+
+    let mut webp = WebP::from_bytes(img_parts::Bytes::copy_from_slice(data))
+        .map_err(|e| format!("Failed to add WebP metadata: {}", e))?;
+    if let Some(icc) = icc {
+        webp.set_icc_profile(Some(icc.into()));
+    }
+    if let Some(exif) = exif {
+        webp.set_exif(Some(exif.into()));
+    }
+
+    // img-parts 0.4 sets the VP8X flags only when it creates that header, so a
+    // second chunk added afterwards, or a VP8X header libwebp already wrote for
+    // an alpha image, is left unflagged. Set both bits from the chunks present.
+    const ICC_FLAG: u8 = 0b0010_0000;
+    const EXIF_FLAG: u8 = 0b0000_1000;
+    let mut flags_to_set = 0u8;
+    if webp.has_chunk(CHUNK_ICCP) {
+        flags_to_set |= ICC_FLAG;
+    }
+    if webp.has_chunk(CHUNK_EXIF) {
+        flags_to_set |= EXIF_FLAG;
+    }
+    let vp8x = webp
+        .chunks_mut()
+        .iter_mut()
+        .find(|chunk| chunk.id() == CHUNK_VP8X)
+        .ok_or("Failed to add WebP metadata: no VP8X header")?;
+    let mut header = vp8x
+        .content()
+        .data()
+        .map(|d| d.to_vec())
+        .unwrap_or_default();
+    let Some(flags) = header.first_mut() else {
+        return Err("Failed to add WebP metadata: empty VP8X header".to_string());
+    };
+    *flags |= flags_to_set;
+    *vp8x = img_parts::riff::RiffChunk::new(
+        CHUNK_VP8X,
+        img_parts::riff::RiffContent::Data(header.into()),
+    );
+
+    Ok(webp.encoder().bytes().to_vec())
 }
 
 fn encode_avif(
@@ -759,6 +907,260 @@ mod tests {
             compress(input.to_str().unwrap(), output.to_str().unwrap(), &opts).unwrap();
             assert!(std::fs::metadata(&output).unwrap().len() > 0);
         }
+    }
+
+    /// Minimal little-endian TIFF block with one entry: Orientation = `value`.
+    fn orientation_exif(value: u8) -> Vec<u8> {
+        vec![
+            0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // II, 42, IFD at 8
+            0x01, 0x00, // one entry
+            0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, value, 0x00, 0x00, 0x00, // 0x0112
+            0x00, 0x00, 0x00, 0x00, // no next IFD
+        ]
+    }
+
+    /// Stand-in RGB ICC profile: only the header fields the code looks at are real.
+    fn fake_rgb_icc() -> Vec<u8> {
+        let mut p = vec![0u8; 200];
+        p[0..4].copy_from_slice(&200u32.to_be_bytes());
+        p[12..16].copy_from_slice(b"mntr");
+        p[16..20].copy_from_slice(b"RGB ");
+        p[36..40].copy_from_slice(b"acsp");
+        p[100..200].fill(0x5A);
+        p
+    }
+
+    /// 40x20 pixels, left half red and right half blue, saved as JPEG with an
+    /// Orientation tag and an ICC profile. Orientation 6 displays it 20x40 with the
+    /// red half on top.
+    fn write_tagged_jpeg(path: &Path, orientation: u8, icc: &[u8]) {
+        use img_parts::{ImageEXIF, ImageICC};
+        let img = image::RgbImage::from_fn(40, 20, |x, _| {
+            if x < 20 {
+                image::Rgb([230, 20, 20])
+            } else {
+                image::Rgb([20, 20, 230])
+            }
+        });
+        let mut plain = Vec::new();
+        DynamicImage::ImageRgb8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut plain),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(plain.into()).unwrap();
+        jpeg.set_exif(Some(orientation_exif(orientation).into()));
+        jpeg.set_icc_profile(Some(icc.to_vec().into()));
+        std::fs::write(path, jpeg.encoder().bytes()).unwrap();
+    }
+
+    fn opts_with_strip(format: ImageFormat, strip_metadata: bool) -> ImageOptions {
+        ImageOptions {
+            strip_metadata,
+            ..default_opts(format)
+        }
+    }
+
+    /// Dimensions, ICC profile and EXIF as an independent decoder sees the output.
+    fn inspect(path: &Path) -> (DynamicImage, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let mut decoder = image::ImageReader::open(path)
+            .unwrap()
+            .with_guessed_format()
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        let icc = decoder.icc_profile().unwrap();
+        let exif = decoder.exif_metadata().unwrap();
+        let img = DynamicImage::from_decoder(decoder).unwrap();
+        (img, icc, exif)
+    }
+
+    fn top_is_red(img: &DynamicImage) -> bool {
+        let rgb = img.to_rgb8();
+        let p = rgb.get_pixel(rgb.width() / 2, 2);
+        p[0] > 150 && p[2] < 100
+    }
+
+    #[test]
+    fn jpeg_output_is_upright_when_metadata_is_stripped() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        let output = dir.path().join("out.jpg");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        compress_with_threads(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &opts_with_strip(ImageFormat::Jpeg, true),
+            1,
+        )
+        .unwrap();
+
+        let (img, _, exif) = inspect(&output);
+        assert_eq!((img.width(), img.height()), (20, 40));
+        assert!(top_is_red(&img), "pixels were not rotated clockwise");
+        assert!(exif.is_none());
+    }
+
+    #[test]
+    fn jpeg_keeps_the_tag_and_is_not_rotated_twice_when_metadata_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        let output = dir.path().join("out.jpg");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        compress_with_threads(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &opts_with_strip(ImageFormat::Jpeg, false),
+            1,
+        )
+        .unwrap();
+
+        let (img, _, exif) = inspect(&output);
+        // Stored pixels unchanged; the copied tag tells viewers to rotate once.
+        assert_eq!((img.width(), img.height()), (40, 20));
+        let tag = exif.as_deref().and_then(Orientation::from_exif_chunk);
+        assert_eq!(tag, Some(Orientation::Rotate90));
+    }
+
+    #[test]
+    fn png_output_is_upright_in_both_strip_modes() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        for strip in [true, false] {
+            let output = dir.path().join(format!("out_{strip}.png"));
+            compress_with_threads(
+                input.to_str().unwrap(),
+                output.to_str().unwrap(),
+                &opts_with_strip(ImageFormat::Png, strip),
+                1,
+            )
+            .unwrap();
+            let (img, _, exif) = inspect(&output);
+            assert_eq!((img.width(), img.height()), (20, 40), "strip={strip}");
+            assert!(top_is_red(&img), "strip={strip}");
+            // No EXIF on PNG: a copied tag would rotate it a second time.
+            assert!(exif.is_none(), "strip={strip}");
+        }
+    }
+
+    #[test]
+    fn orientation_is_applied_before_resize() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        let output = dir.path().join("out.jpg");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        let opts = ImageOptions {
+            resize: Some(Resolution {
+                width: 10,
+                height: 0,
+            }),
+            ..default_opts(ImageFormat::Jpeg)
+        };
+        compress_with_threads(input.to_str().unwrap(), output.to_str().unwrap(), &opts, 1).unwrap();
+        // Upright source is 20x40; width 10 fits it to 10x20.
+        assert_eq!(image::image_dimensions(&output).unwrap(), (10, 20));
+    }
+
+    #[test]
+    fn icc_profile_survives_jpeg_webp_and_png_in_both_strip_modes() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("p3.jpg");
+        let profile = fake_rgb_icc();
+        write_tagged_jpeg(&input, 1, &profile);
+
+        for (format, ext) in [
+            (ImageFormat::Jpeg, "jpg"),
+            (ImageFormat::WebP, "webp"),
+            (ImageFormat::Png, "png"),
+        ] {
+            for strip in [true, false] {
+                let output = dir.path().join(format!("out_{strip}.{ext}"));
+                compress_with_threads(
+                    input.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                    &opts_with_strip(format.clone(), strip),
+                    1,
+                )
+                .unwrap();
+                let (_, icc, _) = inspect(&output);
+                assert_eq!(icc.as_ref(), Some(&profile), "{ext} strip={strip}");
+            }
+        }
+    }
+
+    #[test]
+    fn exif_is_copied_only_when_metadata_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("tagged.jpg");
+        write_tagged_jpeg(&input, 1, &fake_rgb_icc());
+
+        for (format, ext) in [(ImageFormat::Jpeg, "jpg"), (ImageFormat::WebP, "webp")] {
+            for strip in [true, false] {
+                let output = dir.path().join(format!("out_{strip}.{ext}"));
+                compress_with_threads(
+                    input.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                    &opts_with_strip(format.clone(), strip),
+                    1,
+                )
+                .unwrap();
+                let (_, _, exif) = inspect(&output);
+                assert_eq!(exif.is_some(), !strip, "{ext} strip={strip}");
+            }
+        }
+    }
+
+    #[test]
+    fn webp_with_alpha_keeps_alpha_and_icc() {
+        use img_parts::ImageICC;
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("alpha.png");
+        let output = dir.path().join("alpha.webp");
+        let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_fn(32, 32, |x, _| {
+            image::Rgba([200, 100, 50, if x < 16 { 0 } else { 255 }])
+        }));
+        let mut plain = Vec::new();
+        rgba.write_to(
+            &mut std::io::Cursor::new(&mut plain),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        let mut png = img_parts::png::Png::from_bytes(plain.into()).unwrap();
+        let profile = fake_rgb_icc();
+        png.set_icc_profile(Some(profile.clone().into()));
+        std::fs::write(&input, png.encoder().bytes()).unwrap();
+
+        compress_with_threads(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &default_opts(ImageFormat::WebP),
+            1,
+        )
+        .unwrap();
+        let (img, icc, _) = inspect(&output);
+        assert_eq!(icc, Some(profile));
+        assert!(img.color().has_alpha());
+        assert!(img.to_rgba8().get_pixel(2, 2)[3] < 50);
+    }
+
+    #[test]
+    fn icc_profile_must_match_the_output_colour_space() {
+        let rgb = fake_rgb_icc();
+        let mut cmyk = rgb.clone();
+        cmyk[16..20].copy_from_slice(b"CMYK");
+        let mut gray = rgb.clone();
+        gray[16..20].copy_from_slice(b"GRAY");
+        assert!(icc_fits(&rgb, false));
+        assert!(!icc_fits(&cmyk, false));
+        assert!(!icc_fits(&gray, false));
+        assert!(icc_fits(&gray, true));
+        assert!(!icc_fits(&[0u8; 8], false));
     }
 
     #[test]
