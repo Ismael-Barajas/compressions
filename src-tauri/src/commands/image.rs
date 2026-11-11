@@ -442,9 +442,13 @@ const UNKNOWN_IMAGE_PIXELS: u64 = 24_000_000;
 /// Measured peak memory per in-flight job, per source pixel (decode, convert, encode).
 const BYTES_PER_PIXEL: u64 = 10;
 const AVIF_BYTES_PER_PIXEL: u64 = 32;
+/// AVIF encodes are multi-threaded, so more workers with fewer threads each gained
+/// nothing: on 32 cores, 8 workers x 4 threads ran 2.19 img/s, 19 x 1 ran 1.39,
+/// 19 x 2 ran 2.11 and 32 x 1 ran 2.02. AVIF batches keep the old cap of 8.
+const AVIF_MAX_WORKERS: usize = 8;
 
-/// `(workers, encoder_threads)` for an image batch. Workers = logical cores,
-/// bounded by how many jobs on the largest image fit the memory budget, never
+/// `(workers, encoder_threads)` for an image batch. Workers = logical cores (8 at
+/// most for AVIF), bounded by how many jobs on the largest image fit the memory budget, never
 /// fewer than 2 (1 on a single core) and never more than the batch has files.
 /// Encoder threads split the cores across the jobs in flight.
 fn image_batch_plan(
@@ -463,7 +467,15 @@ fn image_batch_plan(
     let fit_in_memory =
         usize::try_from(IMAGE_BATCH_MEMORY_BUDGET / bytes_per_job).unwrap_or(usize::MAX);
     let floor = cores.min(2);
-    let workers = cores.min(fit_in_memory).max(floor).min(batch_len.max(1));
+    let most_useful = if any_avif_output {
+        cores.min(AVIF_MAX_WORKERS)
+    } else {
+        cores
+    };
+    let workers = most_useful
+        .min(fit_in_memory)
+        .max(floor)
+        .min(batch_len.max(1));
     (workers, image_encoder_threads(cores, workers, batch_len))
 }
 
@@ -494,8 +506,10 @@ mod tests {
         assert_eq!(image_batch_plan(8, 100, 7 * MP, false), (8, 1));
         assert_eq!(image_batch_plan(16, 100, 7 * MP, false), (16, 1));
         assert_eq!(image_batch_plan(32, 100, 7 * MP, false), (32, 1));
-        // 7 MP AVIF: 224 MB per job, 19 fit in 4 GiB.
-        assert_eq!(image_batch_plan(32, 100, 7 * MP, true), (19, 1));
+        // 7 MP AVIF: 19 jobs would fit in 4 GiB, but AVIF stays at 8 workers.
+        assert_eq!(image_batch_plan(32, 100, 7 * MP, true), (8, 4));
+        assert_eq!(image_batch_plan(16, 100, 7 * MP, true), (8, 2));
+        assert_eq!(image_batch_plan(4, 100, 7 * MP, true), (4, 1));
     }
 
     #[test]

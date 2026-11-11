@@ -109,12 +109,14 @@ fn moz_encode(raw: &[u8], w: usize, h: usize, cfg: &dyn Fn(&mut mozjpeg::Compres
     c.finish().unwrap()
 }
 
+type MozSetup = Box<dyn Fn(&mut mozjpeg::Compress)>;
+
 fn moz(jpg: &str) {
     println!("== mozjpeg settings, q80, encode only (best of 3)");
     let rgb = open_image_bounded(jpg).unwrap().to_rgb8();
     let (w, h) = (rgb.width() as usize, rgb.height() as usize);
     let raw = rgb.as_raw();
-    let variants: Vec<(&str, Box<dyn Fn(&mut mozjpeg::Compress)>)> = vec![
+    let variants: Vec<(&str, MozSetup)> = vec![
         (
             "app today (mozjpeg defaults)",
             Box::new(|c| c.set_quality(80.0)),
