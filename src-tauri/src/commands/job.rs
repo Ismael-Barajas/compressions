@@ -163,6 +163,9 @@ pub async fn run_sidecar(
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", spec.sidecar, e))?;
 
+    // Windowless sidecars are "background" to Windows and land on the E-cores.
+    crate::qos::opt_out_child(child.pid());
+
     if let Err(e) = register_job(app, &ctx.job_id, child, &ctx.output) {
         // Never leave an unregistered child running.
         kill_job(app, &ctx.job_id);
@@ -485,12 +488,21 @@ pub fn send_started(ctx: &JobContext, on_progress: &Channel<ProgressEvent>) {
 
 /// Number of sidecar jobs to run at once for encoders that are single-threaded
 /// (audio codecs, Ghostscript). Leaves headroom for the UI and the webview.
-pub fn single_threaded_batch_concurrency(cap: usize) -> usize {
-    std::thread::available_parallelism()
+///
+/// Measured throughput keeps rising up to half the logical cores, so the cap is
+/// `cores / 2`, kept between `min_cap` and `max_cap`.
+pub fn single_threaded_batch_concurrency(min_cap: usize, max_cap: usize) -> usize {
+    let cores = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(2)
-        .saturating_sub(1)
-        .clamp(1, cap)
+        .unwrap_or(2);
+    let concurrency = batch_concurrency_for_cores(cores, min_cap, max_cap);
+    tracing::info!(cores, concurrency, "Single-threaded batch concurrency");
+    concurrency
+}
+
+fn batch_concurrency_for_cores(cores: usize, min_cap: usize, max_cap: usize) -> usize {
+    let cap = (cores / 2).clamp(min_cap, max_cap);
+    cores.saturating_sub(1).clamp(1, cap)
 }
 
 /// While the queue is paused, hold off starting the next file. Jobs already running
@@ -718,8 +730,32 @@ mod tests {
 
     #[test]
     fn batch_concurrency_is_bounded() {
-        let c = single_threaded_batch_concurrency(4);
-        assert!((1..=4).contains(&c));
-        assert_eq!(single_threaded_batch_concurrency(1), 1);
+        let c = single_threaded_batch_concurrency(4, 16);
+        assert!((1..=16).contains(&c));
+        assert_eq!(single_threaded_batch_concurrency(1, 1), 1);
+    }
+
+    #[test]
+    fn audio_batch_concurrency_by_core_count() {
+        use crate::commands::audio::{AUDIO_BATCH_MAX, AUDIO_BATCH_MIN};
+        let audio = |cores| batch_concurrency_for_cores(cores, AUDIO_BATCH_MIN, AUDIO_BATCH_MAX);
+        assert_eq!(audio(2), 1);
+        assert_eq!(audio(4), 3);
+        assert_eq!(audio(8), 4);
+        assert_eq!(audio(16), 8);
+        assert_eq!(audio(32), 16);
+        assert_eq!(audio(64), 16);
+    }
+
+    #[test]
+    fn pdf_batch_concurrency_by_core_count() {
+        use crate::commands::pdf::{PDF_BATCH_MAX, PDF_BATCH_MIN};
+        let pdf = |cores| batch_concurrency_for_cores(cores, PDF_BATCH_MIN, PDF_BATCH_MAX);
+        assert_eq!(pdf(2), 1);
+        assert_eq!(pdf(4), 3);
+        // 8 cores: cap = 8/2 = 4 (the old fixed cap was 3).
+        assert_eq!(pdf(8), 4);
+        assert_eq!(pdf(16), 8);
+        assert_eq!(pdf(32), 12);
     }
 }

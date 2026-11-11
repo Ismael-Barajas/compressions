@@ -4,6 +4,7 @@ mod ffmpeg;
 mod history;
 mod logging;
 mod media;
+pub mod qos;
 mod state;
 pub mod types;
 mod utils;
@@ -28,6 +29,10 @@ pub fn run() {
     let _guard = logging::setup::init_tracing(log_dir);
 
     tracing::info!("Compressions app starting");
+
+    // Native image encoders run in this process; keep them off the E-cores when
+    // the window loses focus.
+    qos::opt_out_current_process();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

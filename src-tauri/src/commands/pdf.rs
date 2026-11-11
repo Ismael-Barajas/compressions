@@ -10,8 +10,10 @@ use crate::types::{BatchEntry, CompressionResult, PdfOptions, PdfQuality, Progre
 use crate::validate::validate_pdf_options;
 
 /// Ghostscript's pdfwrite device is single-threaded but memory-hungry, so a batch
-/// runs a few files at once rather than one per core.
-const PDF_BATCH_CONCURRENCY_CAP: usize = 3;
+/// runs half the logical cores at once, between these bounds. The top end is lower
+/// than audio's because of Ghostscript's memory use on very large PDFs.
+pub(crate) const PDF_BATCH_MIN: usize = 3;
+pub(crate) const PDF_BATCH_MAX: usize = 12;
 
 /// Resolve the path to the bundled Ghostscript resource directory.
 /// In dev mode, it's at `src-tauri/binaries/gs-res/`.
@@ -169,7 +171,7 @@ pub async fn compress_pdfs_batch(
     options: PdfOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let concurrency = single_threaded_batch_concurrency(PDF_BATCH_CONCURRENCY_CAP);
+    let concurrency = single_threaded_batch_concurrency(PDF_BATCH_MIN, PDF_BATCH_MAX);
     Ok(
         run_batch(&app, files, concurrency, move |app, entry| {
             let options = options.clone();
