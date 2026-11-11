@@ -22,11 +22,11 @@ not be measured (macOS, the app's own window in the foreground), the item says s
 | 2 | **NVENC fails on 10-bit sources** with H.264 selected, falls back to CPU, then **disables the GPU encoder for the session** | Every 10-bit clip (game capture, HDR phone video) is CPU-encoded on a machine with an RTX 4090 | S |
 | 3 | Videos run one at a time even on NVENC, which is not CPU-bound | Two at once on NVENC: 173 → 334 fps (HEVC 1440p), 273 → 548 fps (H.264 1080p). Software on 32 threads: +20–47% | S–M |
 | 4 | NVENC `-cq` is fed the CRF number unchanged, but the scales differ | GPU output is **~2× the size** of CPU output at the same slider value, at a much higher quality than asked for | S (needs a decision) |
-| 5 | Image batch is capped at 8 workers regardless of core count | 8 → 32 workers: JPEG 33 → 70 img/s, WebP 24 → 57, PNG 9.0 → 16.9, AVIF 2.3 → 3.5 | S–M |
+| 5 | Image batch is capped at 8 workers regardless of core count | 8 → 32 workers: JPEG 33 → 70 img/s, WebP 24 → 57, PNG 9.0 → 16.9. AVIF does not gain and stays at 8 (see Results) | S–M |
 | 6 | Audio capped at 4 at once, PDF at 3 | Audio 2.2 → 5.6 files/s (16 at once). PDF 1.5 → 4.7–5.3 files/s (12 at once) | S |
 | 7 | **EXIF orientation is dropped without rotating the pixels** (default settings) | Photos tagged as rotated come out sideways. Reproduced | S |
 | 8 | **ICC colour profile is always dropped** (JPEG, WebP), with metadata kept or stripped | Display P3 photos (every recent iPhone) lose their profile and render desaturated. Reproduced on `IMG_2229.jpg` | S |
-| 9 | Bundled FFmpeg is an unpinned nightly `master` build | It **crashed 4 times in roughly 60 libx264 runs** (3 while two encodes overlapped, 1 alone) | S–M |
+| 9 | Bundled FFmpeg is an unpinned nightly `master` build | It **crashed 4 times in roughly 60 libx264 runs** (3 while two encodes overlapped, 1 alone). The test machine may be at fault instead (see Results) | S–M |
 | 10 | Small items: two GIF builders miss `-nostdin`; AV1 has no GPU path | See below | S |
 
 Also below: the three open PRs, ideas that were measured and rejected, and the work packages.
@@ -439,18 +439,66 @@ Anything launched from a background shell on this machine is subject to item 1. 
 which scheduling each number was taken under; the first image-batch run of this session was
 unknowingly on efficiency cores only and was redone. Run-to-run variance was a few percent.
 
+## Results
+
+Packages A, B and C are implemented on this branch. Checks on the combined branch: `cargo fmt --check`,
+`cargo clippy -- -D warnings`, `cargo test --lib` (167 passed, 1 ignored), `npx tsc --noEmit`,
+`npm run test:run` (105 passed). Nothing below was exercised in the app's own window.
+
+**What changed from the plan above**
+
+- **Item 1, speed-up not reproduced after the change.** The opt-out is in place for the app
+  process and for every encode, image-helper and thumbnail spawn (not the short ffprobe and
+  encoder-detection spawns). Reading the child's state back shows it applied
+  (`ControlMask=1, StateMask=0`). But on the day of implementation Windows was not demoting the
+  test processes at all: libx264 on the 1440p clip ran 163–164 fps with and without the opt-out,
+  three rounds each. The 105–112 fps figure above is from an earlier session. So the mechanism is
+  verified and harmless, and the size of the gain in the real app is still unmeasured. To check:
+  run the same large image batch twice, once with the window focused and once minimized, on a
+  build before and after this branch.
+- **Item 5, AVIF keeps 8 workers.** Re-measured with 38 files: 8 workers × 4 threads 2.19 img/s,
+  16 × 2 2.17, 19 × 2 2.11, 32 × 1 2.02, and 19 × 1 (what the 4 GiB budget picked) 1.39. The
+  3.52 img/s figure in the item 5 table came from a batch of exactly 32 files on 32 workers, which
+  hides the cost of the last files running on one thread each, and 32 workers needs about 7 GB at
+  7 MP. JPEG, WebP and PNG gains held on the re-run: 34.0 → 69.5, 23.7 → 58.6 and 9.1 → 17.3 img/s.
+- **Item 6, 8-thread machines.** PDF runs 4 at once there, not 3 as today: the cap is half the
+  logical cores. Audio is unchanged up to 8 threads.
+- **Item 7, pixels are always upright.** Keeping metadata no longer leaves the pixels unrotated:
+  the pixels are rotated in every mode and the orientation tag in the copied EXIF is reset to 1,
+  because many viewers ignore EXIF orientation in WebP. Thumbnails are upright too.
+- **Item 8.** The ICC profile is kept for JPEG, WebP and PNG in both strip modes (536 bytes on
+  `IMG_2229.jpg`; outputs grew by 554 and 562 bytes). A profile whose colour space does not match
+  the output pixels (CMYK, or gray on RGB output) is dropped. EXIF now also survives a format
+  change (JPEG to WebP) when metadata is kept. PNG output carries no EXIF.
+- **Item 9, weaker evidence.** During implementation rustc crashed five times on this machine
+  under load (illegal instruction, LLVM errors, an impossible const-eval failure) and one FFmpeg
+  run failed with no cause captured. Random faults in unrelated programs point at the machine
+  (an i9-13900K), so the four libx264 crashes may not be FFmpeg's fault. Pinning a release build
+  is still right for reproducible releases, but the crash count is not proof of a bad nightly.
+  Rerun the 30-round overlap test on a second machine before drawing a conclusion.
+
+**Known gaps, not fixed here**
+
+- AVIF and HEIC inputs are decoded by FFmpeg through a temporary QOI file, so their orientation,
+  ICC profile and EXIF do not reach the output.
+- Native AVIF output (`ravif`) carries no ICC profile.
+- A 10-bit HDR source encoded to 8-bit H.264 keeps its HDR colour tags and looks washed out; this
+  was already true on the software path.
+- `benches/compression_bench.rs` fails `cargo clippy --all-targets` (it did before this branch).
+
 ## Implementation status
 
 | Item | Status |
 |------|--------|
-| Dependency bumps (replaces #10, #11) | Done on this branch, `cc47bdf` |
-| 1. Scheduler opt-out | Not started |
-| 2. NVENC 10-bit | Not started |
-| 3. NVENC two at once | Not started |
+| Dependency bumps (replaces #10, #11) | Done, `cc47bdf` |
+| 1. Scheduler opt-out | Done, `1db68b9`, `7e98325`. Gain in the app unmeasured |
+| 2. NVENC 10-bit | Done, `1eb5548`. Verified with the bundled FFmpeg by hand |
+| 3. NVENC two at once | Done, `aaf5131`. Unit-tested; not run in the app |
 | 4. NVENC quality mapping | Awaiting decision |
-| 5. Image workers | Not started |
-| 6. Audio/PDF caps | Not started |
-| 7. Orientation | Not started |
-| 8. ICC profile | Not started |
+| 5. Image workers | Done, `275967a`, `ff2b7c8`. AVIF stays at 8 |
+| 6. Audio/PDF caps | Done, `1db68b9` |
+| 7. Orientation | Done, `bd3d3e7`, `44d7bc7` |
+| 8. ICC profile | Done, `bd3d3e7` |
 | 9. Pin FFmpeg | Awaiting decision |
-| 10. Small items | Not started |
+| 10. Small items | `-nostdin` done, `1eb5548`. `av1_nvenc` awaiting decision |
+| F. Integration | Not started: `npm run tauri build`, manual checks, CHANGELOG, `.claude/CLAUDE.md`, `PLAN.md` |
