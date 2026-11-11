@@ -246,8 +246,9 @@ fn batch(jpg: &str, png: &str, out: &str) {
             n as f64 / secs
         );
     }
-    let n = 32;
-    for (workers, threads) in [(8usize, 4usize), (16, 2), (32, 1)] {
+    // 19 workers is what the app's memory budget allows for a 7 MP AVIF batch on 32 cores.
+    let n = 38;
+    for (workers, threads) in [(8usize, 4usize), (16, 2), (19, 1), (19, 2), (32, 1)] {
         let secs = run_batch(n, workers, &|i| {
             let o = format!("{out}/b_{i}.avif");
             compress_with_threads(jpg, &o, &opts(ImageFormat::Avif, 80, true), threads).unwrap();
