@@ -79,8 +79,15 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         );
     }
 
-    // Force yuv420p for maximum player compatibility (WMP, QuickTime, etc.)
-    if !is_hw {
+    // Force yuv420p for maximum player compatibility (WMP, QuickTime, etc.).
+    // H.264 hardware encoders need it too: they have no 10-bit mode, and h264_nvenc
+    // fails on a 10-bit source ("No capable devices found") without it. HEVC
+    // hardware encoders are left alone so 10-bit sources stay 10-bit.
+    let is_h264_hw = opts
+        .hw_encoder
+        .as_deref()
+        .is_some_and(|hw| hw.starts_with("h264_"));
+    if !is_hw || is_h264_hw {
         args.push("-pix_fmt".into());
         args.push("yuv420p".into());
     }
@@ -313,7 +320,7 @@ pub fn build_gif_palette_args(
     palette: &str,
     opts: &GifConversionOptions,
 ) -> Vec<String> {
-    let mut args: Vec<String> = vec!["-y".into(), "-i".into(), input.into()];
+    let mut args: Vec<String> = vec!["-nostdin".into(), "-y".into(), "-i".into(), input.into()];
     args.extend(progress_args());
     args.push("-vf".into());
     args.push(format!(
@@ -333,6 +340,7 @@ pub fn build_gif_paletteuse_args(
     opts: &GifConversionOptions,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
+        "-nostdin".into(),
         "-y".into(),
         "-i".into(),
         input.into(),
@@ -712,6 +720,49 @@ mod tests {
         assert!(args.contains(&"hevc_nvenc".to_string()));
         assert!(args.contains(&"-rc".to_string()));
         assert!(args.contains(&"-cq".to_string()));
+    }
+
+    fn pix_fmt_of(args: &[String]) -> Option<&str> {
+        let idx = args.iter().position(|a| a == "-pix_fmt")?;
+        args.get(idx + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn h264_hw_encoders_force_8_bit() {
+        // H.264 hardware encoders have no 10-bit mode; without this a 10-bit source
+        // fails on h264_nvenc and the GPU encoder gets disabled for the session.
+        for hw in ["h264_nvenc", "h264_videotoolbox"] {
+            let mut opts = default_video_opts();
+            opts.hw_encoder = Some(hw.into());
+            let args = build_video_args("in.mp4", "out.mp4", &opts);
+            assert_eq!(pix_fmt_of(&args), Some("yuv420p"), "{hw}");
+            // Must come after the input and before the output.
+            let i = args.iter().position(|a| a == "-i").unwrap();
+            let p = args.iter().position(|a| a == "-pix_fmt").unwrap();
+            assert!(i < p && p < args.len() - 1, "{hw}");
+        }
+    }
+
+    #[test]
+    fn hevc_hw_encoders_keep_source_bit_depth() {
+        for hw in ["hevc_nvenc", "hevc_videotoolbox"] {
+            let mut opts = default_video_opts();
+            opts.codec = VideoCodec::H265;
+            opts.hw_encoder = Some(hw.into());
+            let args = build_video_args("in.mp4", "out.mp4", &opts);
+            assert_eq!(pix_fmt_of(&args), None, "{hw}");
+        }
+    }
+
+    #[test]
+    fn gif_two_pass_builders_pass_nostdin_first() {
+        let opts = gif_opts(Some(480));
+        let pass1 = build_gif_palette_args("in.mp4", "pal.png", &opts);
+        let pass2 = build_gif_paletteuse_args("in.mp4", "pal.png", "out.gif", &opts);
+        for args in [&pass1, &pass2] {
+            assert_eq!(args.first().map(String::as_str), Some("-nostdin"));
+            assert_eq!(args.iter().filter(|a| *a == "-nostdin").count(), 1);
+        }
     }
 
     #[test]
