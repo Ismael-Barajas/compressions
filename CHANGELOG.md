@@ -6,18 +6,19 @@ All notable changes to Compressions are documented here.
 
 ### Performance
 
-- **Image batches use every core**: JPEG, WebP and PNG batches were limited to 8 files at a time on any machine. They now run one per logical core, held back only by a memory budget for very large images. On a 32-thread machine a JPEG batch went from 34 to 70 images per second, WebP from 24 to 59 and PNG from 9 to 17. AVIF stays at 8 at a time, where it is fastest
-- **Two videos at once on NVIDIA GPUs**: with NVENC doing the encoding the CPU is mostly idle, so batches now run two videos side by side, close to double the throughput for H.264 and H.265. Software and macOS hardware encoding still run one at a time
-- **AV1 on the GPU**: AV1 now uses NVENC on cards that support it (RTX 40-series and newer), about twice the speed of the software encoder. Other cards keep using SVT-AV1
+- **Image batches use every core**: JPEG, WebP and PNG batches were limited to 8 files at a time on any machine. They now run one per logical core, held back only by a memory budget for very large images. On a 32-thread machine a JPEG batch went from 34 to 70 images per second, WebP from 24 to 59 and PNG from 9 to 17. AVIF stays at 8 at a time, where it is fastest, and so do batches with HEIC or AVIF inputs, which each need a separate decode
+- **Two videos at once on NVIDIA GPUs**: with NVENC doing the encoding the CPU is mostly idle, so batches now run two videos side by side, close to double the throughput for H.264 and H.265. Software and macOS hardware encodes always run alone, decided file by file, so a batch that falls back to the CPU partway through never runs two CPU encodes at once
+- **NVENC session limits no longer turn off GPU encoding**: if a second GPU encode cannot start while the first is running (an older driver's limit, another program using the encoder), that file is encoded on the CPU and the app switches to one GPU encode at a time for the session, instead of turning GPU encoding off
+- **AV1 on the GPU**: AV1 now uses NVENC on cards that support it (RTX 40-series and newer), about twice the speed of the software encoder. Other cards keep using SVT-AV1. 4:2:2, 4:4:4 and RGB sources are converted to 4:2:0 for the GPU, keeping 8-bit or 10-bit as the source has it
 - **GPU videos are no longer twice the size**: NVENC was given the quality slider's number on the wrong scale, so GPU output came out about twice as large as CPU output at the same setting. The same slider position now gives about the same quality and size on GPU and CPU. Videos encoded on an NVIDIA GPU will be 30–55% smaller than before at the same setting, at slightly lower (CPU-equivalent) quality; move the slider toward quality to get the old result
 - **More audio and PDF files at once on bigger machines**: audio batches run up to 16 files at a time (was 4) and PDF batches up to 12 (was 3), scaled to half the logical cores. Audio went from 2.2 to 5.6 files per second and PDF from 1.5 to about 5 on a 32-thread machine
 - **Full speed when the window is in the background (Windows)**: on CPUs with performance and efficiency cores, Windows can push background work onto the efficiency cores. The app and its encoders now ask not to be slowed down this way
 
 ### Bug Fixes
 
-- **Rotated photos no longer come out sideways**: photos that rely on a rotation tag (most phone photos taken in portrait) were written with the tag removed and the pixels untouched. Images are now rotated properly on output, with metadata kept or stripped, and thumbnails are upright too
+- **Rotated photos no longer come out sideways**: photos that rely on a rotation tag (most phone photos taken in portrait) were written with the tag removed and the pixels untouched. Images are now rotated properly on output, with metadata kept or stripped, and thumbnails are upright too. When a rotated photo keeps its metadata, the small preview image embedded in the EXIF data (still sideways) is dropped
 - **Colour profiles are kept**: the ICC profile was dropped from JPEG and WebP output (and from PNG), so wide-gamut photos such as Display P3 iPhone shots looked washed out. The profile is now carried across, including when metadata is stripped
-- **Metadata survives a format change**: with "keep metadata" on, converting between formats (for example JPEG to WebP) now keeps the EXIF data
+- **Metadata survives a format change**: with "keep metadata" on, converting between formats (for example JPEG to WebP) now keeps the EXIF data. EXIF too large for a JPEG (over 64 KB, possible from PNG or WebP sources) is left out of JPEG output
 - **10-bit and HDR videos use the GPU for H.264**: these failed on NVENC, fell back to the CPU, and then turned hardware encoding off for the rest of the session. They now encode on the GPU as 8-bit H.264
 - Two-pass GIF conversion can no longer stall waiting on keyboard input
 

@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use compressions_lib::compression::image::{compress_with_threads, open_image_bounded};
+use compressions_lib::compression::image::{compress_with_threads, decode_image_bounded};
 use compressions_lib::types::{ImageFormat, ImageOptions, ResizeMode};
 use image::metadata::Orientation;
 use image::ImageDecoder;
@@ -36,6 +36,12 @@ fn best_of<T>(runs: usize, mut f: impl FnMut() -> T) -> (T, f64) {
         last = Some(v);
     }
     (last.unwrap(), best)
+}
+
+/// Decode the way the app's compress path does (limits, orientation, ICC, EXIF),
+/// keeping only the pixels.
+fn open_image_bounded(path: &str) -> Result<image::DynamicImage, String> {
+    decode_image_bounded(path, true).map(|d| d.image)
 }
 
 fn size(p: &str) -> u64 {
@@ -364,58 +370,16 @@ fn orient(jpg: &str, out: &str) {
     }
 }
 
-/// Opt this process out of Windows power throttling (EcoQoS), which otherwise can confine
-/// a process started from a background shell to the efficiency cores and halve the batch
-/// numbers. Enabled with PERF_PROBE_NO_THROTTLE=1.
-#[cfg(windows)]
-fn opt_out_of_power_throttling() {
-    #[repr(C)]
-    struct ProcessPowerThrottlingState {
-        version: u32,
-        control_mask: u32,
-        state_mask: u32,
-    }
-    extern "system" {
-        fn GetCurrentProcess() -> *mut std::ffi::c_void;
-        fn SetProcessInformation(
-            process: *mut std::ffi::c_void,
-            class: i32,
-            info: *const std::ffi::c_void,
-            size: u32,
-        ) -> i32;
-    }
-    const PROCESS_POWER_THROTTLING: i32 = 4;
-    // Version 1; control the execution-speed bit (1) and set it off (state 0).
-    let state = ProcessPowerThrottlingState {
-        version: 1,
-        control_mask: 1,
-        state_mask: 0,
-    };
-    let ok = unsafe {
-        SetProcessInformation(
-            GetCurrentProcess(),
-            PROCESS_POWER_THROTTLING,
-            &state as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<ProcessPowerThrottlingState>() as u32,
-        )
-    };
-    println!(
-        "power throttling opt-out: {}",
-        if ok != 0 { "ok" } else { "FAILED" }
-    );
-}
-
-#[cfg(not(windows))]
-fn opt_out_of_power_throttling() {
-    println!("power throttling opt-out: not applicable on this platform");
-}
-
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (mode, jpg, png, out) = (a[1].as_str(), a[2].as_str(), a[3].as_str(), a[4].as_str());
     std::fs::create_dir_all(out).unwrap();
+    // Opt out of Windows power throttling (EcoQoS), which can confine a process
+    // started from a background shell to the efficiency cores and halve the batch
+    // numbers. Same call the app makes at startup; it logs whether it worked.
     if std::env::var("PERF_PROBE_NO_THROTTLE").as_deref() == Ok("1") {
-        opt_out_of_power_throttling();
+        tracing_subscriber::fmt().with_target(false).init();
+        compressions_lib::qos::opt_out_current_process();
     }
     if matches!(mode, "single" | "all") {
         single(jpg, png, out);

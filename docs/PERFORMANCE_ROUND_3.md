@@ -168,7 +168,8 @@ for libx264/libx265 when there are 16 or more logical cores.
 
 Things to handle:
 - If the GPU encoder gets disabled mid-batch (a real failure), the second slot now runs a second
-  software encode. Acceptable; it only costs contention until the batch ends.
+  software encode. (Planned as acceptable; the review found it is not, since two software encodes
+  each try to use every core. Fixed: see Review fixes under Results.)
 - Cards with one encoder chip will not double. This RTX 4090 has two. Expect no loss there, not a gain.
 - VideoToolbox: not measured. Keep macOS at 1 until someone measures on a Mac.
 - The pipeline view labels the video lane "FFmpeg · one at a time" (`PipelineView.tsx`); update it.
@@ -464,13 +465,14 @@ clicked) on the test machine: i9-13900K, RTX 4090, bundled FFmpeg 9.0.2.
 | Photo tagged Orientation 6 | Output is 200×400, upright |
 | `IMG_2229.jpg` | Output keeps the 536-byte ICC profile |
 | 32 MP3s and 24 PDFs together | 16 audio and 12 PDF jobs at once: 4.8 audio files/s and 3.2 PDFs/s while sharing the machine (2.2 and 1.5 before, each measured alone) |
-| Pipeline view | Video lane reads "FFmpeg · up to 2 at a time" and shows "2 running" |
+| Pipeline view | Video lane read "FFmpeg · up to 2 at a time" and showed "2 running". The label is now "FFmpeg · 1, or 2 on NVENC" (Review fixes); the new text was not checked in the built app |
 
 ### What changed from the plan above
 
 - **Item 1, speed-up not reproduced after the change.** The opt-out is in place for the app
   process and for every encode, image-helper and thumbnail spawn (not the short ffprobe and
-  encoder-detection spawns). Reading a child's state back shows it applied
+  encoder-detection spawns; since the review fixes the NVENC verification encodes run one after
+  another). Reading a child's state back shows it applied
   (`ControlMask=1, StateMask=0`). But on the day of implementation Windows was not demoting the
   test processes at all: libx264 on the 1440p clip ran 163–164 fps with and without the opt-out,
   three rounds each. The 105–112 fps figure above is from an earlier session. So the mechanism is
@@ -509,6 +511,50 @@ clicked) on the test machine: i9-13900K, RTX 4090, bundled FFmpeg 9.0.2.
   `-cq = CRF + 5` scores within −0.5 to +1.0 VMAF at CRF 18 to 28 (it falls 1 to 1.7 behind at
   CRF 35). One encode runs 183 fps against 67–100 for SVT-AV1 on the 1440p clip; two at once
   270–304 fps. Used only when the startup verification encode passes (RTX 40-series and newer).
+
+### Review fixes
+
+A code review of this branch found ten problems before release. What changed:
+
+- **Video scheduling is decided per file.** The batch used to fix its concurrency (2 on NVENC, 1
+  otherwise) at batch start. A GPU encoder disabled mid-batch then left two software encodes side
+  by side, and a batch started before hardware detection finished stayed at 1. Now the video
+  batch has two permits: an NVENC encode takes one, a software or VideoToolbox encode takes both.
+  The encoder and its permits are chosen when the file is next in line (`run_batch_planned`,
+  `video_permits`), and a file waiting for permits has not started, so Stop, Cancel All, Pause and
+  queue order behave as for any queued file. The `concurrency=2` field in the "Starting video
+  batch" log line above is gone; each file logs a "Video slot" line with its encoder and permits.
+- **A second NVENC session failing no longer disables NVENC.** The "software succeeded, so the GPU
+  encoder is broken" rule was written when one video ran at a time. If an NVENC encode fails while
+  another of ours is running and software then succeeds, the app keeps the encoder and runs NVENC
+  one at a time for the rest of the session (logged at warn). Failing alone still disables it.
+  Not covered: the software retry of the failed file keeps its one permit, so it can overlap one
+  NVENC encode (never a second software encode). Giving the retry both permits from inside the
+  job can deadlock against the batch loop waiting on the same semaphore.
+- **Startup verification opens one NVENC session at a time.** With `av1_nvenc` added it opened
+  three at once; the NVENC checks now run in sequence (H.264 first), the others still in parallel.
+- **AV1 on NVENC gets 4:2:0.** `av1_nvenc` lists 4:4:4 and 4:2:2 inputs but this card refuses them
+  ("No capable devices found" for `yuv444p`, `yuv422p10le`, `gbrp`), which cost a software retry
+  and disabled the encoder; before this branch AV1 was software at `yuv420p`. A
+  `format=yuv420p|nv12|p010le` filter (after the scaler) lets FFmpeg pick: checked with the bundled
+  9.0.2 on `yuv420p`, `yuv420p10le`, `yuv444p`, `yuv444p10le`, `yuv422p`, `yuv422p10le`, `gbrp` and
+  `gbrp10le`, with and without scaling, 8-bit sources come out 8-bit and 10-bit sources 10-bit.
+  (`format=yuv420p|yuv420p10le` does not work: `av1_nvenc` does not take `yuv420p10le`, so 10-bit
+  sources fell to 8-bit.) `hevc_nvenc` also refuses 4:2:2 on this card; it is left as is, since a
+  filter that avoids 4:2:2 would also change output on RTX 50 cards, which encode 4:2:2.
+- **HEIC and AVIF inputs keep 8 workers.** Each is decoded by its own FFmpeg process, outside the
+  memory budget, and the per-core worker count was measured on JPEG, WebP and PNG only. A batch
+  with any such input is capped at 8 (it could start 17 decodes at once on this machine).
+- **WebP with alpha and an ICC profile is valid.** img-parts put ICCP after ALPH; Chromium refuses
+  that order. ICCP is now moved to directly after VP8X and EXIF to the end; checked by decoding
+  app output in Chromium (the old order fails to decode).
+- **Oversized EXIF no longer panics when written to JPEG.** A block over 65 527 bytes does not fit
+  one APP1 segment; it is left out with a warning.
+- **The EXIF thumbnail of a rotated photo is dropped.** The pixels are rotated and the tag reset,
+  but the IFD1 thumbnail was still sideways; the link to it is cut when a rotation was applied.
+- **Smaller cleanups.** EXIF is parsed once per decode (orientation is read from that block) and
+  thumbnails skip the ICC read; `perf_probe` calls `qos::opt_out_current_process` instead of its own
+  copy of the Win32 call; the pipeline label says "FFmpeg · 1, or 2 on NVENC", true on every machine.
 
 ### Known gaps, not fixed here
 
