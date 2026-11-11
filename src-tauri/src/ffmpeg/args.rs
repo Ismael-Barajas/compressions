@@ -39,6 +39,20 @@ fn push_audio_encoding_args(args: &mut Vec<String>, opts: &AudioExtractionOption
     }
 }
 
+/// The `-cq` value that gives an NVENC encoder about the quality the software
+/// encoder gives at `crf`. The two scales differ: fed the CRF number unchanged,
+/// NVENC spent roughly twice the bits. With these offsets GPU output lands within
+/// about 1 VMAF of libx264 / libx265 / SVT-AV1 at the same slider value (four
+/// clips, CRF 18 to 28; see docs/PERFORMANCE_ROUND_3.md item 4).
+fn nvenc_cq(hw_encoder: &str, crf: u8) -> u8 {
+    let offset = if hw_encoder.starts_with("hevc_") {
+        7
+    } else {
+        5
+    };
+    crf.saturating_add(offset).min(51)
+}
+
 pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-nostdin".into(),
@@ -93,18 +107,15 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
     }
 
     // Quality — HW encoders use codec-specific rate control, software uses CRF
-    let is_nvenc = opts
-        .hw_encoder
-        .as_deref()
-        .is_some_and(|hw| hw.contains("nvenc"));
+    let nvenc_encoder = opts.hw_encoder.as_deref().filter(|hw| hw.contains("nvenc"));
 
     if is_hw {
-        if is_nvenc {
-            // NVENC: constant quality VBR. -cq takes the same 0-51 scale as CRF.
+        if let Some(nvenc) = nvenc_encoder {
+            // NVENC: constant quality VBR, with the CRF mapped onto the -cq scale.
             args.push("-rc".into());
             args.push("vbr".into());
             args.push("-cq".into());
-            args.push(opts.crf.to_string());
+            args.push(nvenc_cq(nvenc, opts.crf).to_string());
             if opts.bitrate.is_none() {
                 args.push("-b:v".into());
                 args.push("0".into());
@@ -701,8 +712,8 @@ mod tests {
         assert!(args.contains(&"h264_nvenc".to_string()));
         assert!(args.contains(&"-rc".to_string()));
         assert!(args.contains(&"vbr".to_string()));
-        assert!(args.contains(&"-cq".to_string()));
-        assert!(args.contains(&"28".to_string()));
+        // CRF 28 maps to -cq 33 on H.264 NVENC.
+        assert_eq!(value_after(&args, "-cq"), Some("33"));
         assert!(args.contains(&"-b:v".to_string()));
         assert!(args.contains(&"0".to_string()));
         assert!(args.contains(&"-preset".to_string()));
@@ -719,12 +730,41 @@ mod tests {
         let args = build_video_args("in.mp4", "out.mp4", &opts);
         assert!(args.contains(&"hevc_nvenc".to_string()));
         assert!(args.contains(&"-rc".to_string()));
-        assert!(args.contains(&"-cq".to_string()));
+        // Default CRF 23 maps to -cq 30 on HEVC NVENC.
+        assert_eq!(value_after(&args, "-cq"), Some("30"));
+    }
+
+    #[test]
+    fn nvenc_cq_is_offset_from_crf_and_clamped() {
+        assert_eq!(nvenc_cq("h264_nvenc", 23), 28);
+        assert_eq!(nvenc_cq("hevc_nvenc", 23), 30);
+        assert_eq!(nvenc_cq("av1_nvenc", 23), 28);
+        // -cq 0 means "automatic" to NVENC, so CRF 0 must not map to it.
+        assert_eq!(nvenc_cq("h264_nvenc", 0), 5);
+        assert_eq!(nvenc_cq("h264_nvenc", 51), 51);
+        assert_eq!(nvenc_cq("hevc_nvenc", 48), 51);
+    }
+
+    #[test]
+    fn av1_nvenc_args_keep_source_bit_depth() {
+        let mut opts = default_video_opts();
+        opts.codec = VideoCodec::AV1;
+        opts.hw_encoder = Some("av1_nvenc".into());
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert_eq!(value_after(&args, "-c:v"), Some("av1_nvenc"));
+        assert_eq!(value_after(&args, "-cq"), Some("28"));
+        assert_eq!(value_after(&args, "-preset"), Some("p5"));
+        assert_eq!(pix_fmt_of(&args), None);
+        assert!(!args.contains(&"-crf".to_string()));
+    }
+
+    fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        let idx = args.iter().position(|a| a == flag)?;
+        args.get(idx + 1).map(String::as_str)
     }
 
     fn pix_fmt_of(args: &[String]) -> Option<&str> {
-        let idx = args.iter().position(|a| a == "-pix_fmt")?;
-        args.get(idx + 1).map(String::as_str)
+        value_after(args, "-pix_fmt")
     }
 
     #[test]

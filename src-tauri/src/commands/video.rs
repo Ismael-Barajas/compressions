@@ -33,7 +33,9 @@ fn resolve_hw_encoder(
                 None
             }
         }
-        VideoCodec::AV1 => None, // No good HW AV1 encoder available
+        // NVENC only (171 fps against 67-100 for SVT-AV1 on a 1440p clip);
+        // VideoToolbox has no AV1 encoder.
+        VideoCodec::AV1 => hw_encoders.contains("av1_nvenc").then_some("av1_nvenc"),
     };
     name.map(|s| s.to_string())
 }
@@ -301,8 +303,14 @@ mod tests {
     }
 
     #[test]
-    fn av1_never_uses_hw() {
-        let hw = set(&["h264_nvenc", "hevc_nvenc", "h264_videotoolbox"]);
-        assert_eq!(resolve_hw_encoder(&VideoCodec::AV1, &hw), None);
+    fn av1_uses_nvenc_only_when_the_card_has_it() {
+        let older_card = set(&["h264_nvenc", "hevc_nvenc", "h264_videotoolbox"]);
+        assert_eq!(resolve_hw_encoder(&VideoCodec::AV1, &older_card), None);
+        let newer_card = set(&["h264_nvenc", "hevc_nvenc", "av1_nvenc"]);
+        assert_eq!(
+            resolve_hw_encoder(&VideoCodec::AV1, &newer_card),
+            Some("av1_nvenc".to_string())
+        );
+        assert_eq!(video_batch_concurrency(Some("av1_nvenc")), 2);
     }
 }

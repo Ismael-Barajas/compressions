@@ -17,6 +17,8 @@ const HW_ENCODERS: &[&str] = &[
     "hevc_videotoolbox",
     "h264_nvenc",
     "hevc_nvenc",
+    // RTX 40-series and newer only; older cards fail the verification encode.
+    "av1_nvenc",
 ];
 
 /// Timeout for the one-frame verification encode per HW encoder.
