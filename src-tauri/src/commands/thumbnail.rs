@@ -95,7 +95,7 @@ async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> 
         let (img, orientation) = match scaled {
             Some(scaled) => scaled,
             None => {
-                let decoded = crate::compression::image::decode_image_bounded(&path)?;
+                let decoded = crate::compression::image::decode_image_bounded(&path, false)?;
                 (decoded.image, decoded.orientation)
             }
         };

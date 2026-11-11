@@ -34,7 +34,7 @@ pub fn compress_with_threads(
         return encode_gif(input, output, options.quality);
     }
 
-    let decoded = decode_image_bounded(input)?;
+    let decoded = decode_image_bounded(input, true)?;
     let preserve = !options.strip_metadata;
 
     // Resolve Original → concrete format (defensive; commands layer resolves first)
@@ -61,6 +61,12 @@ pub fn compress_with_threads(
         if let Some(exif) = exif_to_copy.as_mut() {
             // None means the block held no readable tag, so there is nothing to reset.
             let _ = Orientation::remove_from_exif_chunk(exif);
+            // The embedded thumbnail is still sideways and is now untagged.
+            if drop_exif_thumbnail(exif) {
+                tracing::debug!(input = %input, "Dropped EXIF thumbnail after rotating pixels");
+            } else {
+                tracing::debug!(input = %input, "EXIF block unreadable; thumbnail left as is");
+            }
         }
     }
 
@@ -105,7 +111,10 @@ pub struct DecodedImage {
 /// Decode with explicit dimension limits (the crate's default only caps total
 /// allocation), reading orientation, ICC profile and EXIF from the same decoder
 /// so the input file is read once.
-pub fn decode_image_bounded(input: &str) -> Result<DecodedImage, String> {
+///
+/// `read_icc` is false for callers that throw the profile away (thumbnails): for a
+/// JPEG every metadata call re-parses the headers, so skipping it saves one pass.
+pub fn decode_image_bounded(input: &str, read_icc: bool) -> Result<DecodedImage, String> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_EDGE);
     limits.max_image_height = Some(MAX_IMAGE_EDGE);
@@ -128,18 +137,29 @@ pub fn decode_image_bounded(input: &str) -> Result<DecodedImage, String> {
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
     // Metadata is best effort: a broken profile or EXIF block must not fail the file.
-    let orientation = decoder.orientation().unwrap_or_else(|e| {
-        tracing::warn!(input = %input, error = %e, "Could not read image orientation");
-        Orientation::NoTransforms
-    });
-    let icc_profile = decoder.icc_profile().unwrap_or_else(|e| {
-        tracing::warn!(input = %input, error = %e, "Could not read ICC profile");
-        None
-    });
+    // EXIF is read once and the orientation taken from that block. Only without a
+    // readable tag is the decoder asked (TIFF keeps orientation in its own header;
+    // the JPEG and WebP decoders answer from what `exif_metadata` already cached).
     let exif = decoder.exif_metadata().unwrap_or_else(|e| {
         tracing::warn!(input = %input, error = %e, "Could not read EXIF");
         None
     });
+    let orientation_from_exif = exif.as_deref().and_then(Orientation::from_exif_chunk);
+    let orientation = match orientation_from_exif {
+        Some(o) => o,
+        None => decoder.orientation().unwrap_or_else(|e| {
+            tracing::warn!(input = %input, error = %e, "Could not read image orientation");
+            Orientation::NoTransforms
+        }),
+    };
+    let icc_profile = if read_icc {
+        decoder.icc_profile().unwrap_or_else(|e| {
+            tracing::warn!(input = %input, error = %e, "Could not read ICC profile");
+            None
+        })
+    } else {
+        None
+    };
 
     let image = DynamicImage::from_decoder(decoder)
         .map_err(|e| format!("Failed to decode image: {}", e))?;
@@ -151,10 +171,46 @@ pub fn decode_image_bounded(input: &str) -> Result<DecodedImage, String> {
     })
 }
 
-/// Decode with the same limits as [`decode_image_bounded`], pixels only (no
-/// orientation applied).
-pub fn open_image_bounded(input: &str) -> Result<DynamicImage, String> {
-    decode_image_bounded(input).map(|d| d.image)
+/// Cut the EXIF thumbnail (IFD1) off a raw TIFF-structured EXIF block by zeroing
+/// the "next IFD" offset that follows IFD0. Used when the pixels were rotated
+/// upright and the Orientation tag reset: the thumbnail is still stored sideways
+/// and nothing would tell a viewer to rotate it any more. The thumbnail bytes stay
+/// in the block, unreferenced. Returns false, leaving the block untouched, when the
+/// structure is not one it can read safely.
+fn drop_exif_thumbnail(exif: &mut [u8]) -> bool {
+    next_ifd_offset_range(exif)
+        .and_then(|range| exif.get_mut(range))
+        .map(|next| next.fill(0))
+        .is_some()
+}
+
+/// Byte range of the 4-byte "next IFD" offset after IFD0, if the TIFF header and
+/// IFD0 entry count can be read and the range lies inside `exif`.
+fn next_ifd_offset_range(exif: &[u8]) -> Option<std::ops::Range<usize>> {
+    let little_endian = match exif.get(0..4)? {
+        [0x49, 0x49, 0x2A, 0x00] => true,
+        [0x4D, 0x4D, 0x00, 0x2A] => false,
+        _ => return None,
+    };
+    let ifd0_bytes: [u8; 4] = exif.get(4..8)?.try_into().ok()?;
+    let ifd0 = if little_endian {
+        u32::from_le_bytes(ifd0_bytes)
+    } else {
+        u32::from_be_bytes(ifd0_bytes)
+    };
+    let ifd0 = usize::try_from(ifd0).ok()?;
+    let count_bytes: [u8; 2] = exif.get(ifd0..ifd0.checked_add(2)?)?.try_into().ok()?;
+    let entry_count = if little_endian {
+        u16::from_le_bytes(count_bytes)
+    } else {
+        u16::from_be_bytes(count_bytes)
+    };
+    // IFD0 = 2-byte count, 12 bytes per entry, then the 4-byte next-IFD offset.
+    let start = ifd0
+        .checked_add(2)?
+        .checked_add(usize::from(entry_count) * 12)?;
+    let end = start.checked_add(4)?;
+    (end <= exif.len()).then_some(start..end)
 }
 
 /// The colour space an ICC profile describes (header bytes 16..20) must match the
@@ -286,11 +342,27 @@ fn embed_jpeg_metadata(
     if let Some(icc) = icc {
         jpeg.set_icc_profile(Some(icc.into()));
     }
-    if let Some(exif) = exif {
-        jpeg.set_exif(Some(exif.into()));
+    match exif {
+        Some(exif) if exif.len() > JPEG_MAX_EXIF_LEN => {
+            // A PNG eXIf or WebP EXIF chunk can be larger than one APP1 segment, and
+            // img-parts would panic encoding the length. JPEG has no standard way to
+            // split EXIF, so the output goes without it.
+            tracing::warn!(
+                exif_len = exif.len(),
+                max = JPEG_MAX_EXIF_LEN,
+                "EXIF block too large for one JPEG APP1 segment; writing the JPEG without EXIF"
+            );
+        }
+        Some(exif) => jpeg.set_exif(Some(exif.into())),
+        None => {}
     }
     Ok(jpeg.encoder().bytes().to_vec())
 }
+
+/// Largest raw EXIF block one JPEG APP1 segment holds. The segment length field is
+/// a u16 that counts itself (2 bytes), and img-parts prepends `Exif\0\0` (6 bytes):
+/// 65535 - 2 - 6.
+const JPEG_MAX_EXIF_LEN: usize = u16::MAX as usize - 2 - 6;
 
 /// Encode PNG by handing raw pixels straight to oxipng. The previous pipeline
 /// wrote a PNG with the `image` crate, then had oxipng decode and re-encode it;
@@ -409,6 +481,7 @@ fn embed_webp_metadata(
     if let Some(exif) = exif {
         webp.set_exif(Some(exif.into()));
     }
+    put_webp_chunks_in_spec_order(webp.chunks_mut())?;
 
     // img-parts 0.4 sets the VP8X flags only when it creates that header, so a
     // second chunk added afterwards, or a VP8X header libwebp already wrote for
@@ -442,6 +515,30 @@ fn embed_webp_metadata(
     );
 
     Ok(webp.encoder().bytes().to_vec())
+}
+
+/// The extended WebP layout is `VP8X, ICCP, (ANIM), ALPH, VP8 , EXIF, XMP`, and
+/// Chromium refuses a file whose ICCP comes later. img-parts 0.4 places ICCP in
+/// front of the `VP8 ` chunk, which for an alpha image is after ALPH. Move ICCP to
+/// directly after VP8X and EXIF to the end (it is the only trailing chunk we write).
+fn put_webp_chunks_in_spec_order(
+    chunks: &mut Vec<img_parts::riff::RiffChunk>,
+) -> Result<(), String> {
+    use img_parts::webp::{CHUNK_EXIF, CHUNK_ICCP, CHUNK_VP8X};
+
+    if let Some(i) = chunks.iter().position(|c| c.id() == CHUNK_ICCP) {
+        let iccp = chunks.remove(i);
+        let vp8x = chunks
+            .iter()
+            .position(|c| c.id() == CHUNK_VP8X)
+            .ok_or("Failed to add WebP metadata: no VP8X header")?;
+        chunks.insert(vp8x + 1, iccp);
+    }
+    if let Some(i) = chunks.iter().position(|c| c.id() == CHUNK_EXIF) {
+        let exif = chunks.remove(i);
+        chunks.push(exif);
+    }
+    Ok(())
 }
 
 fn encode_avif(
@@ -1189,6 +1286,378 @@ mod tests {
         assert!(!icc_fits(&gray, false));
         assert!(icc_fits(&gray, true));
         assert!(!icc_fits(&[0u8; 8], false));
+    }
+
+    /// A small but complete ICC v2 display profile (sRGB primaries adapted to D50,
+    /// gamma 2.2 curves): header, tag table and the tags a colour engine needs.
+    fn minimal_srgb_icc() -> Vec<u8> {
+        fn s15(v: f64) -> [u8; 4] {
+            ((v * 65536.0).round() as i32).to_be_bytes()
+        }
+        fn xyz(x: f64, y: f64, z: f64) -> Vec<u8> {
+            let mut t = b"XYZ \0\0\0\0".to_vec();
+            for v in [x, y, z] {
+                t.extend_from_slice(&s15(v));
+            }
+            t
+        }
+        let curve = b"curv\0\0\0\0\0\0\0\x01\x02\x33".to_vec(); // gamma 2.2 (u8Fixed8)
+        let mut desc = b"desc\0\0\0\0".to_vec();
+        let name = b"Test sRGB\0";
+        desc.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        desc.extend_from_slice(name);
+        desc.extend_from_slice(&[0u8; 4 + 4 + 2 + 1 + 67]); // empty Unicode and ScriptCode parts
+        let tags: Vec<(&[u8; 4], Vec<u8>)> = vec![
+            (b"desc", desc),
+            (b"wtpt", xyz(0.9642, 1.0, 0.8249)),
+            (b"rXYZ", xyz(0.4361, 0.2225, 0.0139)),
+            (b"gXYZ", xyz(0.3851, 0.7169, 0.0971)),
+            (b"bXYZ", xyz(0.1431, 0.0606, 0.7141)),
+            (b"rTRC", curve.clone()),
+            (b"gTRC", curve.clone()),
+            (b"bTRC", curve),
+            (b"cprt", b"text\0\0\0\0No copyright\0".to_vec()),
+        ];
+        let table_len = 4 + 12 * tags.len();
+        let mut body = Vec::new();
+        let mut table = (tags.len() as u32).to_be_bytes().to_vec();
+        for (sig, data) in &tags {
+            let offset = 128 + table_len + body.len();
+            table.extend_from_slice(*sig);
+            table.extend_from_slice(&(offset as u32).to_be_bytes());
+            table.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            body.extend_from_slice(data);
+            while body.len() % 4 != 0 {
+                body.push(0);
+            }
+        }
+        let size = 128 + table_len + body.len();
+        let mut p = vec![0u8; 128];
+        p[0..4].copy_from_slice(&(size as u32).to_be_bytes());
+        p[8..12].copy_from_slice(&[0x02, 0x10, 0, 0]);
+        p[12..16].copy_from_slice(b"mntr");
+        p[16..20].copy_from_slice(b"RGB ");
+        p[20..24].copy_from_slice(b"XYZ ");
+        p[36..40].copy_from_slice(b"acsp");
+        p[68..72].copy_from_slice(&s15(0.9642));
+        p[72..76].copy_from_slice(&s15(1.0));
+        p[76..80].copy_from_slice(&s15(0.8249));
+        p.extend_from_slice(&table);
+        p.extend_from_slice(&body);
+        p
+    }
+
+    /// Chunk ids of a RIFF WebP file, in file order.
+    fn webp_chunk_ids(data: &[u8]) -> Vec<String> {
+        assert_eq!(&data[0..4], b"RIFF");
+        assert_eq!(&data[8..12], b"WEBP");
+        let mut ids = Vec::new();
+        let mut at = 12;
+        while at + 8 <= data.len() {
+            ids.push(String::from_utf8_lossy(&data[at..at + 4]).into_owned());
+            let size = u32::from_le_bytes(data[at + 4..at + 8].try_into().unwrap()) as usize;
+            at += 8 + size + (size & 1);
+        }
+        assert_eq!(at, data.len(), "chunk sizes do not add up to the file");
+        ids
+    }
+
+    /// 32x32 PNG, half transparent when `alpha`, carrying the given ICC profile and
+    /// EXIF block. eXIf goes before IDAT so the decoder reads it with the header.
+    fn write_png_with_metadata(path: &Path, alpha: bool, icc: Option<&[u8]>, exif: Option<&[u8]>) {
+        use img_parts::ImageICC;
+        let img = if alpha {
+            DynamicImage::ImageRgba8(image::RgbaImage::from_fn(32, 32, |x, _| {
+                image::Rgba([200, 100, 50, if x < 16 { 0 } else { 255 }])
+            }))
+        } else {
+            DynamicImage::ImageRgb8(image::RgbImage::from_fn(32, 32, |x, y| {
+                image::Rgb([(x * 8) as u8, (y * 8) as u8, 90])
+            }))
+        };
+        let mut plain = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut plain),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        let mut png = img_parts::png::Png::from_bytes(plain.into()).unwrap();
+        if let Some(icc) = icc {
+            png.set_icc_profile(Some(icc.to_vec().into()));
+        }
+        if let Some(exif) = exif {
+            let chunk = img_parts::png::PngChunk::new(*b"eXIf", exif.to_vec().into());
+            png.chunks_mut().insert(1, chunk);
+        }
+        std::fs::write(path, png.encoder().bytes()).unwrap();
+    }
+
+    #[test]
+    fn webp_metadata_chunks_follow_the_container_spec_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = minimal_srgb_icc();
+        let exif = orientation_exif(1);
+        for alpha in [true, false] {
+            for (with_icc, with_exif) in [(true, false), (false, true), (true, true)] {
+                let case = format!("alpha={alpha} icc={with_icc} exif={with_exif}");
+                let input = dir
+                    .path()
+                    .join(format!("in_{alpha}_{with_icc}_{with_exif}.png"));
+                let output = input.with_extension("webp");
+                write_png_with_metadata(
+                    &input,
+                    alpha,
+                    with_icc.then_some(profile.as_slice()),
+                    with_exif.then_some(exif.as_slice()),
+                );
+                compress_with_threads(
+                    input.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                    &opts_with_strip(ImageFormat::WebP, false),
+                    1,
+                )
+                .unwrap();
+
+                let data = std::fs::read(&output).unwrap();
+                let mut expected = vec!["VP8X"];
+                if with_icc {
+                    expected.push("ICCP");
+                }
+                if alpha {
+                    expected.push("ALPH");
+                }
+                expected.push("VP8 ");
+                if with_exif {
+                    expected.push("EXIF");
+                }
+                assert_eq!(webp_chunk_ids(&data), expected, "{case}");
+
+                // VP8X flags match the chunks present.
+                let flags = data[20];
+                assert_eq!(flags & 0b0010_0000 != 0, with_icc, "ICC flag, {case}");
+                assert_eq!(flags & 0b0000_1000 != 0, with_exif, "EXIF flag, {case}");
+                assert_eq!(flags & 0b0001_0000 != 0, alpha, "alpha flag, {case}");
+
+                let (_, icc, out_exif) = inspect(&output);
+                assert_eq!(icc, with_icc.then(|| profile.clone()), "{case}");
+                assert_eq!(out_exif.is_some(), with_exif, "{case}");
+            }
+        }
+    }
+
+    /// A JPEG made by the image crate, small enough to keep the test quick.
+    fn tiny_jpeg() -> Vec<u8> {
+        let mut data = Vec::new();
+        DynamicImage::ImageRgb8(image::RgbImage::new(8, 8))
+            .write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        data
+    }
+
+    #[test]
+    fn jpeg_exif_that_fits_one_app1_segment_is_kept() {
+        use img_parts::ImageEXIF;
+        for len in [JPEG_MAX_EXIF_LEN - 1, JPEG_MAX_EXIF_LEN] {
+            let mut exif = orientation_exif(1);
+            exif.resize(len, 0xAB);
+            let out = embed_jpeg_metadata(tiny_jpeg(), None, Some(exif.clone())).unwrap();
+            let parsed = img_parts::jpeg::Jpeg::from_bytes(out.clone().into()).unwrap();
+            assert_eq!(parsed.exif().as_deref(), Some(exif.as_slice()), "len={len}");
+            assert!(image::load_from_memory(&out).is_ok(), "len={len}");
+        }
+    }
+
+    #[test]
+    fn jpeg_exif_too_large_for_one_app1_segment_is_dropped_without_panicking() {
+        use img_parts::ImageEXIF;
+        for len in [JPEG_MAX_EXIF_LEN + 1, JPEG_MAX_EXIF_LEN + 7, 200_000] {
+            let mut exif = orientation_exif(1);
+            exif.resize(len, 0xAB);
+            let icc = fake_rgb_icc();
+            let out = embed_jpeg_metadata(tiny_jpeg(), Some(icc.clone()), Some(exif)).unwrap();
+            let parsed = img_parts::jpeg::Jpeg::from_bytes(out.clone().into()).unwrap();
+            assert!(parsed.exif().is_none(), "len={len}");
+            // The ICC profile still goes in.
+            use img_parts::ImageICC;
+            assert_eq!(parsed.icc_profile().as_deref(), Some(icc.as_slice()));
+            assert!(image::load_from_memory(&out).is_ok(), "len={len}");
+        }
+    }
+
+    /// TIFF-structured EXIF: IFD0 with an Orientation entry, then IFD1 describing a
+    /// 4-byte "thumbnail". The next-IFD offset after IFD0 sits at bytes 22..26.
+    fn exif_with_thumbnail(little_endian: bool, orientation: u16) -> Vec<u8> {
+        let mut b = Vec::new();
+        let p16 = |b: &mut Vec<u8>, v: u16| {
+            b.extend_from_slice(&if little_endian {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            })
+        };
+        let p32 = |b: &mut Vec<u8>, v: u32| {
+            b.extend_from_slice(&if little_endian {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            })
+        };
+        b.extend_from_slice(if little_endian { b"II" } else { b"MM" });
+        p16(&mut b, 42);
+        p32(&mut b, 8); // IFD0 at 8
+        p16(&mut b, 1);
+        p16(&mut b, 0x0112); // Orientation, SHORT, 1 value
+        p16(&mut b, 3);
+        p32(&mut b, 1);
+        p16(&mut b, orientation);
+        p16(&mut b, 0);
+        p32(&mut b, 26); // IFD1 at 26
+        p16(&mut b, 2);
+        p16(&mut b, 0x0201); // JPEGInterchangeFormat, LONG
+        p16(&mut b, 4);
+        p32(&mut b, 1);
+        p32(&mut b, 56);
+        p16(&mut b, 0x0202); // JPEGInterchangeFormatLength, LONG
+        p16(&mut b, 4);
+        p32(&mut b, 1);
+        p32(&mut b, 4);
+        p32(&mut b, 0); // no IFD2
+        b.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xD9]);
+        assert_eq!(b.len(), 60);
+        b
+    }
+
+    #[test]
+    fn exif_thumbnail_is_unlinked_in_both_byte_orders() {
+        for little_endian in [true, false] {
+            let original = exif_with_thumbnail(little_endian, 6);
+            assert_ne!(&original[22..26], &[0, 0, 0, 0]);
+            let mut exif = original.clone();
+            assert!(drop_exif_thumbnail(&mut exif), "le={little_endian}");
+            assert_eq!(&exif[22..26], &[0, 0, 0, 0], "le={little_endian}");
+            // Nothing else changes, and IFD0 still reads.
+            assert_eq!(&exif[..22], &original[..22]);
+            assert_eq!(&exif[26..], &original[26..]);
+            assert_eq!(
+                Orientation::from_exif_chunk(&exif),
+                Some(Orientation::Rotate90)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_exif_is_left_alone() {
+        for little_endian in [true, false] {
+            let full = exif_with_thumbnail(little_endian, 6);
+            // Cut anywhere before the end of the next-IFD field: refused, unchanged.
+            for len in 0..26 {
+                let mut exif = full[..len].to_vec();
+                assert!(!drop_exif_thumbnail(&mut exif), "len={len}");
+                assert_eq!(exif, &full[..len]);
+            }
+            // IFD0 offset past the end, and an entry count running past the end.
+            let mut far = full.clone();
+            far[4..8].copy_from_slice(&if little_endian {
+                u32::MAX.to_le_bytes()
+            } else {
+                u32::MAX.to_be_bytes()
+            });
+            let before = far.clone();
+            assert!(!drop_exif_thumbnail(&mut far));
+            assert_eq!(far, before);
+            let mut many = full.clone();
+            many[8..10].copy_from_slice(&[0xFF, 0xFF]);
+            let before = many.clone();
+            assert!(!drop_exif_thumbnail(&mut many));
+            assert_eq!(many, before);
+        }
+        let mut not_tiff = b"Exif\0\0II*\0\x08\0\0\0".to_vec();
+        assert!(!drop_exif_thumbnail(&mut not_tiff));
+    }
+
+    /// Like `write_tagged_jpeg`, with `exif` as the whole EXIF block.
+    fn write_jpeg_with_exif(path: &Path, exif: &[u8]) {
+        use img_parts::ImageEXIF;
+        let img = image::RgbImage::from_fn(40, 20, |x, _| {
+            if x < 20 {
+                image::Rgb([230, 20, 20])
+            } else {
+                image::Rgb([20, 20, 230])
+            }
+        });
+        let mut plain = Vec::new();
+        DynamicImage::ImageRgb8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut plain),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(plain.into()).unwrap();
+        jpeg.set_exif(Some(exif.to_vec().into()));
+        std::fs::write(path, jpeg.encoder().bytes()).unwrap();
+    }
+
+    #[test]
+    fn rotated_output_drops_the_sideways_exif_thumbnail() {
+        let dir = tempfile::tempdir().unwrap();
+        for little_endian in [true, false] {
+            let input = dir.path().join(format!("thumb6_{little_endian}.jpg"));
+            let output = dir.path().join(format!("thumb6_{little_endian}_out.jpg"));
+            write_jpeg_with_exif(&input, &exif_with_thumbnail(little_endian, 6));
+            compress_with_threads(
+                input.to_str().unwrap(),
+                output.to_str().unwrap(),
+                &opts_with_strip(ImageFormat::Jpeg, false),
+                1,
+            )
+            .unwrap();
+            let (img, _, exif) = inspect(&output);
+            assert_eq!((img.width(), img.height()), (20, 40));
+            let exif = exif.expect("EXIF kept");
+            assert_eq!(&exif[22..26], &[0, 0, 0, 0], "le={little_endian}");
+            assert_eq!(
+                Orientation::from_exif_chunk(&exif),
+                Some(Orientation::NoTransforms)
+            );
+        }
+    }
+
+    #[test]
+    fn unrotated_output_keeps_the_exif_block_as_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("thumb1.jpg");
+        let output = dir.path().join("thumb1_out.jpg");
+        let block = exif_with_thumbnail(true, 1);
+        write_jpeg_with_exif(&input, &block);
+        compress_with_threads(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &opts_with_strip(ImageFormat::Jpeg, false),
+            1,
+        )
+        .unwrap();
+        let (_, _, exif) = inspect(&output);
+        assert_eq!(exif, Some(block));
+    }
+
+    #[test]
+    fn decode_without_icc_still_reads_orientation_and_exif() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        let full = decode_image_bounded(input.to_str().unwrap(), true).unwrap();
+        assert_eq!(full.orientation, Orientation::Rotate90);
+        assert_eq!(full.icc_profile, Some(fake_rgb_icc()));
+        assert!(full.exif.is_some());
+
+        let lean = decode_image_bounded(input.to_str().unwrap(), false).unwrap();
+        assert_eq!(lean.orientation, Orientation::Rotate90);
+        assert_eq!(lean.icc_profile, None);
+        assert_eq!(lean.exif, full.exif);
     }
 
     #[test]

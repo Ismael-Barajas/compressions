@@ -405,13 +405,25 @@ pub async fn compress_images_batch(
             ImageFormat::Avif
         )
     });
-    let (workers, encoder_threads) =
-        image_batch_plan(cores, files.len(), largest_pixels, any_avif_output);
+    // AVIF and HEIC inputs are decoded by a separate FFmpeg process per file, whose
+    // memory is outside the budget below (when AVIF output keeps metadata, FFmpeg
+    // reads the input itself, and that batch is capped as AVIF output anyway).
+    let any_ffmpeg_decode = files
+        .iter()
+        .any(|f| is_avif_input(&f.input) || is_heic_input(&f.input));
+    let (workers, encoder_threads) = image_batch_plan(
+        cores,
+        files.len(),
+        largest_pixels,
+        any_avif_output,
+        any_ffmpeg_decode,
+    );
     tracing::info!(
         files = files.len(),
         cores,
         largest_pixels,
         any_avif_output,
+        any_ffmpeg_decode,
         workers,
         encoder_threads,
         "Image batch plan"
@@ -446,16 +458,22 @@ const AVIF_BYTES_PER_PIXEL: u64 = 32;
 /// nothing: on 32 cores, 8 workers x 4 threads ran 2.19 img/s, 19 x 1 ran 1.39,
 /// 19 x 2 ran 2.11 and 32 x 1 ran 2.02. AVIF batches keep the old cap of 8.
 const AVIF_MAX_WORKERS: usize = 8;
+/// Batches with AVIF or HEIC inputs start one FFmpeg decode process per worker.
+/// The per-core worker count was measured on JPEG, WebP and PNG inputs only, so
+/// these batches keep the cap of 8 they had before.
+const FFMPEG_DECODE_MAX_WORKERS: usize = 8;
 
 /// `(workers, encoder_threads)` for an image batch. Workers = logical cores (8 at
-/// most for AVIF), bounded by how many jobs on the largest image fit the memory budget, never
-/// fewer than 2 (1 on a single core) and never more than the batch has files.
-/// Encoder threads split the cores across the jobs in flight.
+/// most for AVIF output or AVIF/HEIC input), bounded by how many jobs on the largest
+/// image fit the memory budget, never fewer than 2 (1 on a single core) and never
+/// more than the batch has files. Encoder threads split the cores across the jobs
+/// in flight.
 fn image_batch_plan(
     cores: usize,
     batch_len: usize,
     largest_pixels: u64,
     any_avif_output: bool,
+    any_ffmpeg_decode: bool,
 ) -> (usize, usize) {
     let cores = cores.max(1);
     let bytes_per_pixel = if any_avif_output {
@@ -467,11 +485,13 @@ fn image_batch_plan(
     let fit_in_memory =
         usize::try_from(IMAGE_BATCH_MEMORY_BUDGET / bytes_per_job).unwrap_or(usize::MAX);
     let floor = cores.min(2);
-    let most_useful = if any_avif_output {
-        cores.min(AVIF_MAX_WORKERS)
-    } else {
-        cores
-    };
+    let mut most_useful = cores;
+    if any_avif_output {
+        most_useful = most_useful.min(AVIF_MAX_WORKERS);
+    }
+    if any_ffmpeg_decode {
+        most_useful = most_useful.min(FFMPEG_DECODE_MAX_WORKERS);
+    }
     let workers = most_useful
         .min(fit_in_memory)
         .max(floor)
@@ -503,33 +523,33 @@ mod tests {
 
     #[test]
     fn batch_plan_uses_every_core_for_ordinary_photos() {
-        assert_eq!(image_batch_plan(8, 100, 7 * MP, false), (8, 1));
-        assert_eq!(image_batch_plan(16, 100, 7 * MP, false), (16, 1));
-        assert_eq!(image_batch_plan(32, 100, 7 * MP, false), (32, 1));
+        assert_eq!(image_batch_plan(8, 100, 7 * MP, false, false), (8, 1));
+        assert_eq!(image_batch_plan(16, 100, 7 * MP, false, false), (16, 1));
+        assert_eq!(image_batch_plan(32, 100, 7 * MP, false, false), (32, 1));
         // 7 MP AVIF: 19 jobs would fit in 4 GiB, but AVIF stays at 8 workers.
-        assert_eq!(image_batch_plan(32, 100, 7 * MP, true), (8, 4));
-        assert_eq!(image_batch_plan(16, 100, 7 * MP, true), (8, 2));
-        assert_eq!(image_batch_plan(4, 100, 7 * MP, true), (4, 1));
+        assert_eq!(image_batch_plan(32, 100, 7 * MP, true, false), (8, 4));
+        assert_eq!(image_batch_plan(16, 100, 7 * MP, true, false), (8, 2));
+        assert_eq!(image_batch_plan(4, 100, 7 * MP, true, false), (4, 1));
     }
 
     #[test]
     fn batch_plan_short_batch_gives_the_few_jobs_more_threads() {
-        assert_eq!(image_batch_plan(32, 3, 7 * MP, false), (3, 10));
-        assert_eq!(image_batch_plan(32, 1, 7 * MP, false), (1, 32));
+        assert_eq!(image_batch_plan(32, 3, 7 * MP, false, false), (3, 10));
+        assert_eq!(image_batch_plan(32, 1, 7 * MP, false, false), (1, 32));
         // Two AVIFs on 32 cores still get 16 threads each.
-        assert_eq!(image_batch_plan(32, 2, 7 * MP, true), (2, 16));
-        assert_eq!(image_batch_plan(32, 0, 0, false), (1, 32));
+        assert_eq!(image_batch_plan(32, 2, 7 * MP, true, false), (2, 16));
+        assert_eq!(image_batch_plan(32, 0, 0, false, false), (1, 32));
     }
 
     #[test]
     fn batch_plan_large_images_are_bounded_by_memory() {
         // 48 MP JPEG: 480 MB per job, 8 fit in 4 GiB.
-        assert_eq!(image_batch_plan(32, 100, 48 * MP, false), (8, 4));
+        assert_eq!(image_batch_plan(32, 100, 48 * MP, false, false), (8, 4));
         // 48 MP AVIF: 1.5 GB per job, 2 fit.
-        assert_eq!(image_batch_plan(32, 100, 48 * MP, true), (2, 16));
+        assert_eq!(image_batch_plan(32, 100, 48 * MP, true, false), (2, 16));
         // Bigger than the whole budget: still at least 2 workers.
-        assert_eq!(image_batch_plan(32, 100, 200 * MP, true), (2, 16));
-        assert_eq!(image_batch_plan(8, 100, 48 * MP, false), (8, 1));
+        assert_eq!(image_batch_plan(32, 100, 200 * MP, true, false), (2, 16));
+        assert_eq!(image_batch_plan(8, 100, 48 * MP, false, false), (8, 1));
     }
 
     #[test]
@@ -537,20 +557,34 @@ mod tests {
         assert_eq!(UNKNOWN_IMAGE_PIXELS, 24 * MP);
         // 240 MB per job: 17 fit.
         assert_eq!(
-            image_batch_plan(32, 100, UNKNOWN_IMAGE_PIXELS, false),
+            image_batch_plan(32, 100, UNKNOWN_IMAGE_PIXELS, false, false),
             (17, 1)
         );
         // 768 MB per AVIF job: 5 fit.
         assert_eq!(
-            image_batch_plan(32, 100, UNKNOWN_IMAGE_PIXELS, true),
+            image_batch_plan(32, 100, UNKNOWN_IMAGE_PIXELS, true, false),
             (5, 6)
         );
     }
 
     #[test]
+    fn batch_plan_heic_and_avif_inputs_keep_8_workers() {
+        // Each worker runs its own FFmpeg decode, outside the memory budget.
+        assert_eq!(image_batch_plan(32, 100, 7 * MP, false, true), (8, 4));
+        assert_eq!(
+            image_batch_plan(32, 100, UNKNOWN_IMAGE_PIXELS, false, true),
+            (8, 4)
+        );
+        assert_eq!(image_batch_plan(16, 100, 7 * MP, false, true), (8, 2));
+        // Fewer cores or a tighter memory fit still win.
+        assert_eq!(image_batch_plan(4, 100, 7 * MP, false, true), (4, 1));
+        assert_eq!(image_batch_plan(32, 100, 48 * MP, true, true), (2, 16));
+    }
+
+    #[test]
     fn batch_plan_single_core_machine_runs_one_job() {
-        assert_eq!(image_batch_plan(1, 100, 48 * MP, true), (1, 1));
-        assert_eq!(image_batch_plan(0, 100, 7 * MP, false), (1, 1));
+        assert_eq!(image_batch_plan(1, 100, 48 * MP, true, false), (1, 1));
+        assert_eq!(image_batch_plan(0, 100, 7 * MP, false, false), (1, 1));
     }
 
     fn avif_opts(resize: Option<Resolution>, resize_mode: ResizeMode) -> ImageOptions {
