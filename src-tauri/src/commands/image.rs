@@ -71,6 +71,7 @@ async fn run_ffmpeg_helper(
         .args(args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg for {}: {}", what, e))?;
+    crate::qos::opt_out_child(child.pid());
     register_job(app, job_id, child, output)?;
 
     let mut code = None;

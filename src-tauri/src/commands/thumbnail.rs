@@ -134,7 +134,7 @@ async fn thumbnail_via_decode(
         .ok_or_else(|| "Invalid temp path".to_string())?
         .to_string();
 
-    // Decode to full-size QOI (no filters â€” avoids complex filtergraph conflict)
+    // Decode to full-size QOI (no filters — avoids complex filtergraph conflict)
     let args: Vec<String> = vec![
         "-nostdin".into(),
         "-y".into(),
@@ -154,6 +154,7 @@ async fn thumbnail_via_decode(
         .args(&args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
+    crate::qos::opt_out_child(child.pid());
 
     let mut stderr_lines = Vec::new();
     let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
@@ -226,6 +227,7 @@ async fn thumbnail_ffmpeg(
         .args(&args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
+    crate::qos::opt_out_child(child.pid());
 
     let mut stderr_lines = Vec::new();
     let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
@@ -247,7 +249,7 @@ async fn thumbnail_ffmpeg(
         return Err("FFmpeg thumbnail timed out".to_string());
     }
 
-    // child dropped here on success path â€” process already terminated
+    // child dropped here on success path — process already terminated
 
     if !out_path.exists() {
         let stderr = stderr_lines.join("\n");
@@ -263,7 +265,7 @@ async fn thumbnail_ffmpeg(
 async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, String> {
     let ext = get_extension(path);
 
-    // PDF or unsupported â€” no thumbnail
+    // PDF or unsupported — no thumbnail
     if !NATIVE_IMAGE_EXTENSIONS.contains(&ext.as_str())
         && ext != "avif"
         && ext != "heic"
@@ -290,7 +292,7 @@ async fn generate_one(app: &AppHandle, path: &str) -> Result<Option<String>, Str
     let result = if NATIVE_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         thumbnail_image(path.to_string(), out_path.clone()).await
     } else if ext == "heic" || ext == "heif" {
-        // HEIC uses tile grids internally â€” FFmpeg assembles them via a complex
+        // HEIC uses tile grids internally — FFmpeg assembles them via a complex
         // filtergraph, so we can't add -vf filters. Decode to a temp QOI first,
         // then thumbnail with the image crate.
         thumbnail_via_decode(app, path, out_path.clone()).await
