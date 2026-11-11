@@ -38,34 +38,66 @@ pub async fn detect_hw_encoders(app: &AppHandle) -> HashSet<String> {
         }
     };
 
-    // Verify concurrently: each check is a separate FFmpeg spawn, and running them
-    // back to back only delays when a video dropped right after launch can use them.
+    // Each check is a separate FFmpeg spawn. Running them back to back only delays
+    // when a video dropped right after launch can use them, so they run at once,
+    // except the NVENC ones: each opens a GPU session, and three at once can hit a
+    // driver's session limit and wrongly fail an encoder. Those run one after another.
+    let (nvenc, others): (Vec<String>, Vec<String>) = listed
+        .into_iter()
+        .partition(|name| name.ends_with("_nvenc"));
     let mut checks = tokio::task::JoinSet::new();
-    for name in listed {
+    for name in others {
         let app = app.clone();
         checks.spawn(async move {
             let verdict = verify_hw_encoder(&app, &name).await;
-            (name, verdict)
+            vec![(name, verdict)]
         });
     }
+    let app_for_nvenc = app.clone();
+    checks.spawn(async move {
+        let mut verdicts = Vec::new();
+        for name in nvenc_verification_order(nvenc) {
+            let verdict = verify_hw_encoder(&app_for_nvenc, &name).await;
+            verdicts.push((name, verdict));
+        }
+        verdicts
+    });
 
     let mut working = HashSet::new();
     while let Some(joined) = checks.join_next().await {
-        let Ok((name, verdict)) = joined else {
+        let Ok(verdicts) = joined else {
             continue;
         };
-        match verdict {
-            Ok(true) => {
-                working.insert(name);
-            }
-            Ok(false) => {
-                tracing::info!(encoder = %name, "HW encoder listed but not usable; skipping")
-            }
-            Err(e) => tracing::warn!(encoder = %name, error = %e, "HW encoder verification failed"),
+        for (name, verdict) in verdicts {
+            record_verdict(&mut working, name, verdict);
         }
     }
     tracing::info!(encoders = ?working, "Usable HW encoders");
     working
+}
+
+/// NVENC encoders in a fixed order (the listing comes from a HashSet): H.264 first,
+/// since it is the default codec and the most likely to be wanted right away.
+fn nvenc_verification_order(mut nvenc: Vec<String>) -> Vec<String> {
+    let rank = |name: &str| match name {
+        "h264_nvenc" => 0,
+        "hevc_nvenc" => 1,
+        _ => 2,
+    };
+    nvenc.sort_by_key(|name| rank(name));
+    nvenc
+}
+
+fn record_verdict(working: &mut HashSet<String>, name: String, verdict: Result<bool, String>) {
+    match verdict {
+        Ok(true) => {
+            working.insert(name);
+        }
+        Ok(false) => {
+            tracing::info!(encoder = %name, "HW encoder listed but not usable; skipping")
+        }
+        Err(e) => tracing::warn!(encoder = %name, error = %e, "HW encoder verification failed"),
+    }
 }
 
 async fn verify_hw_encoder(app: &AppHandle, encoder: &str) -> Result<bool, String> {
@@ -230,4 +262,18 @@ pub async fn probe_video_info(app: &AppHandle, path: &str) -> Result<VideoInfo, 
         duration,
         resolution,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nvenc_encoders_are_verified_h264_first() {
+        let listed = vec!["av1_nvenc".into(), "hevc_nvenc".into(), "h264_nvenc".into()];
+        assert_eq!(
+            nvenc_verification_order(listed),
+            vec!["h264_nvenc", "hevc_nvenc", "av1_nvenc"]
+        );
+    }
 }

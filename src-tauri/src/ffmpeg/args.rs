@@ -53,6 +53,9 @@ fn nvenc_cq(hw_encoder: &str, crf: u8) -> u8 {
     crf.saturating_add(offset).min(51)
 }
 
+/// The 4:2:0 formats av1_nvenc accepts, 8-bit and 10-bit.
+const AV1_NVENC_PIX_FMTS: &str = "format=yuv420p|nv12|p010le";
+
 pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-nostdin".into(),
@@ -134,14 +137,30 @@ pub fn build_video_args(input: &str, output: &str, opts: &VideoOptions) -> Vec<S
         args.push(opts.crf.to_string());
     }
 
+    let mut filters: Vec<String> = Vec::new();
+
     // Resolution — downscale only, maintain aspect ratio, ensure even dimensions.
     // `force_divisible_by` rounds in the same scaler instead of a second `scale` pass.
     if let Some(ref res) = opts.resolution {
-        args.push("-vf".into());
-        args.push(format!(
+        filters.push(format!(
             "scale='min({w},iw)':'min({h},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
             w = res.width, h = res.height
         ));
+    }
+
+    // av1_nvenc advertises 4:4:4 and 4:2:2 inputs but the GPU refuses them ("No
+    // capable devices found" for yuv444p, yuv422p10le, gbrp on an RTX 4090), which
+    // used to cost a failed spawn and disable the encoder for the session. Offer only
+    // 4:2:0 and let FFmpeg pick the closest: 8-bit sources come out 8-bit, 10-bit
+    // sources 10-bit (p010le; av1_nvenc does not take yuv420p10le directly).
+    // After the scaler, so it converts the smaller frame.
+    if opts.hw_encoder.as_deref() == Some("av1_nvenc") {
+        filters.push(AV1_NVENC_PIX_FMTS.into());
+    }
+
+    if !filters.is_empty() {
+        args.push("-vf".into());
+        args.push(filters.join(","));
     }
 
     // Bitrate (overrides CRF/CQ if set)
@@ -754,8 +773,49 @@ mod tests {
         assert_eq!(value_after(&args, "-c:v"), Some("av1_nvenc"));
         assert_eq!(value_after(&args, "-cq"), Some("28"));
         assert_eq!(value_after(&args, "-preset"), Some("p5"));
+        // No forced -pix_fmt (that would make every source 8-bit); a format filter
+        // limits it to 4:2:0 at the source's bit depth instead.
         assert_eq!(pix_fmt_of(&args), None);
+        assert_eq!(
+            value_after(&args, "-vf"),
+            Some("format=yuv420p|nv12|p010le")
+        );
         assert!(!args.contains(&"-crf".to_string()));
+    }
+
+    #[test]
+    fn av1_nvenc_format_filter_follows_the_scaler() {
+        let mut opts = default_video_opts();
+        opts.codec = VideoCodec::AV1;
+        opts.hw_encoder = Some("av1_nvenc".into());
+        opts.resolution = Some(Resolution {
+            width: 1280,
+            height: 720,
+        });
+        let args = build_video_args("in.mp4", "out.mp4", &opts);
+        assert_eq!(args.iter().filter(|a| *a == "-vf").count(), 1);
+        assert_eq!(
+            value_after(&args, "-vf"),
+            Some(
+                "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p|nv12|p010le"
+            )
+        );
+    }
+
+    #[test]
+    fn only_av1_nvenc_gets_a_format_filter() {
+        for (codec, hw) in [
+            (VideoCodec::AV1, None),
+            (VideoCodec::H264, Some("h264_nvenc")),
+            (VideoCodec::H265, Some("hevc_nvenc")),
+            (VideoCodec::H265, Some("hevc_videotoolbox")),
+        ] {
+            let mut opts = default_video_opts();
+            opts.codec = codec;
+            opts.hw_encoder = hw.map(String::from);
+            let args = build_video_args("in.mp4", "out.mp4", &opts);
+            assert!(!args.contains(&"-vf".to_string()), "{hw:?}");
+        }
     }
 
     fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -783,6 +843,9 @@ mod tests {
         }
     }
 
+    /// HEVC hardware encoders get neither -pix_fmt nor a format filter: 10-bit stays
+    /// 10-bit and 4:4:4 stays 4:4:4. (hevc_nvenc still refuses 4:2:2 on pre-RTX 50
+    /// cards; that file falls back to software.)
     #[test]
     fn hevc_hw_encoders_keep_source_bit_depth() {
         for hw in ["hevc_nvenc", "hevc_videotoolbox"] {
