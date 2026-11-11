@@ -35,7 +35,7 @@ const END_GAP = 48; // vertical room for the check -> output arrow
 const END_Y = (LANES_H - (2 * NODE_H + END_GAP)) / 2; // the pair is centered on the lanes
 
 const LANES: { mediaType: MediaType; title: string; engine: string; emptyText: string }[] = [
-  { mediaType: "video", title: "Video", engine: "FFmpeg · one at a time", emptyText: "No videos" },
+  { mediaType: "video", title: "Video", engine: "FFmpeg · up to 2 at a time", emptyText: "No videos" },
   { mediaType: "image", title: "Image", engine: "Native · parallel", emptyText: "No images" },
   { mediaType: "pdf", title: "PDF", engine: "Ghostscript · parallel", emptyText: "No PDFs" },
   { mediaType: "audio", title: "Audio", engine: "FFmpeg · parallel", emptyText: "No audio" },
@@ -108,7 +108,7 @@ export default function PipelineView() {
   return (
     <div className="relative min-h-0 flex-1" role="region" aria-label="Compression pipeline" aria-describedby={descriptionId}>
       <p id={descriptionId} className="sr-only">
-        Queued files flow into one lane per media type. Videos encode one at a time with FFmpeg; images encode in
+        Queued files flow into one lane per media type. Videos encode with FFmpeg, up to two at a time; images encode in
         parallel natively; PDFs in parallel with Ghostscript; audio in parallel with FFmpeg. Every result then passes a
         size check that keeps the original when the output isn't smaller, before it is written to the output folder.
       </p>

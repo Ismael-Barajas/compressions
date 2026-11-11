@@ -156,8 +156,28 @@ fn should_retry_in_software(
     exit_code != Some(0) && used_hw && !job_cancelled && !all_cancelled
 }
 
-/// Video encoding is sequential on purpose: libx264/x265/SVT-AV1 already saturate
-/// every core, so a second concurrent encode only adds contention.
+/// How many videos of one batch encode at once, given the HW encoder the batch's
+/// codec resolves to at batch start.
+///
+/// NVENC runs 2: the encode is on the GPU, the CPU is mostly idle, and two encodes
+/// measured close to double the throughput (173 -> 334 fps HEVC 1440p, 273 -> 548
+/// fps H.264 1080p on an RTX 4090); three or four gave nothing more. Cards with a
+/// single encoder chip should not lose from it. Software (libx264/x265/SVT-AV1)
+/// stays at 1 because it already fills the cores, and VideoToolbox stays at 1
+/// until it has been measured on a Mac.
+fn video_batch_concurrency(hw_encoder: Option<&str>) -> usize {
+    let uses_nvenc = hw_encoder.is_some_and(|hw| hw.ends_with("_nvenc"));
+    if uses_nvenc {
+        2
+    } else {
+        1
+    }
+}
+
+/// Encodes one video at a time in software and two at a time on NVENC; see
+/// [`video_batch_concurrency`]. The encoder is decided per file, so if the GPU
+/// encoder is disabled mid-batch the second slot runs a software encode alongside
+/// the first until the batch ends. That only costs contention.
 #[tauri::command]
 pub async fn compress_videos_batch(
     app: AppHandle,
@@ -165,7 +185,15 @@ pub async fn compress_videos_batch(
     options: VideoOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    Ok(run_batch(&app, files, 1, move |app, entry| {
+    let batch_hw_encoder = pick_hw_encoder(&app, &options.codec);
+    let concurrency = video_batch_concurrency(batch_hw_encoder.as_deref());
+    tracing::info!(
+        files = files.len(),
+        encoder = batch_hw_encoder.as_deref().unwrap_or("software"),
+        concurrency,
+        "Starting video batch"
+    );
+    Ok(run_batch(&app, files, concurrency, move |app, entry| {
         let options = options.clone();
         let on_progress = on_progress.clone();
         async move {
@@ -242,6 +270,34 @@ mod tests {
         assert!(!should_retry_in_software(Some(1), false, false, false));
         // Success: no retry.
         assert!(!should_retry_in_software(Some(0), true, false, false));
+    }
+
+    #[test]
+    fn two_videos_at_once_only_on_nvenc() {
+        assert_eq!(video_batch_concurrency(Some("h264_nvenc")), 2);
+        assert_eq!(video_batch_concurrency(Some("hevc_nvenc")), 2);
+        // Not measured on a Mac: stays sequential.
+        assert_eq!(video_batch_concurrency(Some("h264_videotoolbox")), 1);
+        assert_eq!(video_batch_concurrency(Some("hevc_videotoolbox")), 1);
+        // Software encoders already fill the cores.
+        assert_eq!(video_batch_concurrency(None), 1);
+    }
+
+    #[test]
+    fn batch_concurrency_follows_resolved_encoder() {
+        // A Windows/Linux box with NVENC: H.264 and H.265 go to the GPU, AV1 does not.
+        let hw = set(&["h264_nvenc", "hevc_nvenc"]);
+        let for_codec =
+            |c: VideoCodec| video_batch_concurrency(resolve_hw_encoder(&c, &hw).as_deref());
+        assert_eq!(for_codec(VideoCodec::H264), 2);
+        assert_eq!(for_codec(VideoCodec::H265), 2);
+        assert_eq!(for_codec(VideoCodec::AV1), 1);
+        // VideoToolbox wins over NVENC when both are present, so the batch stays at 1.
+        let mac = set(&["h264_videotoolbox", "h264_nvenc"]);
+        assert_eq!(
+            video_batch_concurrency(resolve_hw_encoder(&VideoCodec::H264, &mac).as_deref()),
+            1
+        );
     }
 
     #[test]
