@@ -7,11 +7,14 @@
 //
 // On Windows with an Intel hybrid CPU, a process started from a background shell can be
 // confined to the efficiency cores, which roughly halves the batch numbers. See the doc.
+// Set PERF_PROBE_NO_THROTTLE=1 to opt this process out of power throttling first.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use compressions_lib::compression::image::{compress_with_threads, open_image_bounded};
 use compressions_lib::types::{ImageFormat, ImageOptions, ResizeMode};
+use image::metadata::Orientation;
+use image::ImageDecoder;
 
 fn opts(format: ImageFormat, quality: u8, strip: bool) -> ImageOptions {
     ImageOptions {
@@ -257,11 +260,46 @@ fn batch(jpg: &str, png: &str, out: &str) {
     }
 }
 
+/// What an independent decoder sees in an output file: pixels, EXIF orientation tag, ICC profile.
+fn inspect(path: &str) -> (image::DynamicImage, Option<Orientation>, Option<Vec<u8>>) {
+    let mut decoder = image::ImageReader::open(path)
+        .unwrap()
+        .with_guessed_format()
+        .unwrap()
+        .into_decoder()
+        .unwrap();
+    let icc = decoder.icc_profile().unwrap();
+    let tag = decoder
+        .exif_metadata()
+        .unwrap()
+        .and_then(|e| Orientation::from_exif_chunk(&e));
+    (
+        image::DynamicImage::from_decoder(decoder).unwrap(),
+        tag,
+        icc,
+    )
+}
+
+/// The orientation test image is red on its left half; upright (rotated 90° clockwise) it
+/// is 200x400 with red on top.
+fn is_upright(img: &image::DynamicImage) -> bool {
+    let rgb = img.to_rgb8();
+    let top = rgb.get_pixel(rgb.width() / 2, 5);
+    rgb.dimensions() == (200, 400) && top[0] > 150 && top[2] < 100
+}
+
 fn orient(jpg: &str, out: &str) {
-    use img_parts::{ImageEXIF, ImageICC};
+    use img_parts::ImageEXIF;
     println!("== orientation and colour profile handling");
     // 400x200 landscape pixels tagged Orientation=6 (viewers show it as 200x400 portrait).
-    let img = image::RgbImage::from_fn(400, 200, |x, _| image::Rgb([(x % 256) as u8, 80, 160]));
+    // Left half red, right half blue, so "upright" can be checked from the pixels.
+    let img = image::RgbImage::from_fn(400, 200, |x, _| {
+        if x < 200 {
+            image::Rgb([230, 20, 20])
+        } else {
+            image::Rgb([20, 20, 230])
+        }
+    });
     let mut plain = Vec::new();
     image::DynamicImage::ImageRgb8(img)
         .write_to(
@@ -281,39 +319,101 @@ fn orient(jpg: &str, out: &str) {
     let src = format!("{out}/orient6.jpg");
     std::fs::write(&src, j.encoder().bytes()).unwrap();
 
-    for strip in [true, false] {
-        let o = format!("{out}/orient6_strip{strip}.jpg");
-        compress_with_threads(&src, &o, &opts(ImageFormat::Jpeg, 80, strip), 1).unwrap();
-        let outj = img_parts::jpeg::Jpeg::from_bytes(std::fs::read(&o).unwrap().into()).unwrap();
-        let dims = image::image_dimensions(&o).unwrap();
-        println!(
-            "orientation-6 input 400x200, strip_metadata={strip}: output pixels {}x{}, exif kept={}",
-            dims.0,
-            dims.1,
-            outj.exif().is_some()
-        );
-    }
-    let inj = img_parts::jpeg::Jpeg::from_bytes(std::fs::read(jpg).unwrap().into()).unwrap();
-    println!(
-        "photo input icc profile bytes: {:?}",
-        inj.icc_profile().map(|b| b.len())
-    );
-    for (fmt, ext) in [(ImageFormat::Jpeg, "jpg"), (ImageFormat::WebP, "webp")] {
+    for (fmt, ext) in [(ImageFormat::Jpeg, "jpg"), (ImageFormat::Png, "png")] {
         for strip in [true, false] {
-            let o = format!("{out}/icc_strip{strip}.{ext}");
-            compress_with_threads(jpg, &o, &opts(fmt.clone(), 80, strip), 1).unwrap();
-            let bytes = std::fs::read(&o).unwrap();
-            let has_icc = bytes.windows(4).any(|w| w == b"ICCP")
-                || bytes.windows(11).any(|w| w == b"ICC_PROFILE");
-            println!("photo -> {ext}, strip_metadata={strip}: icc profile kept={has_icc}");
+            let o = format!("{out}/orient6_strip{strip}.{ext}");
+            compress_with_threads(&src, &o, &opts(fmt.clone(), 80, strip), 1).unwrap();
+            let (pixels, tag, _) = inspect(&o);
+            // What a viewer shows: the pixels with the output's own tag applied.
+            let mut shown = pixels.clone();
+            shown.apply_orientation(tag.unwrap_or(Orientation::NoTransforms));
+            println!(
+                "orientation-6 input 400x200 -> {ext}, strip_metadata={strip}: output pixels {}x{}, \
+                 pixels upright={}, exif tag={:?}, displays upright={}",
+                pixels.width(),
+                pixels.height(),
+                is_upright(&pixels),
+                tag,
+                is_upright(&shown)
+            );
         }
     }
+    let (_, _, photo_icc) = inspect(jpg);
+    println!(
+        "photo input icc profile bytes: {:?}",
+        photo_icc.as_ref().map(|b| b.len())
+    );
+    for (fmt, ext) in [
+        (ImageFormat::Jpeg, "jpg"),
+        (ImageFormat::WebP, "webp"),
+        (ImageFormat::Png, "png"),
+    ] {
+        for strip in [true, false] {
+            let o = format!("{out}/icc_strip{strip}.{ext}");
+            compress_with_threads(jpg, &o, &opts(fmt.clone(), 80, strip), 4).unwrap();
+            let (_, _, icc) = inspect(&o);
+            let kept = icc.is_some() && icc == photo_icc;
+            println!(
+                "photo -> {ext}, strip_metadata={strip}: icc profile kept={kept} ({:?} bytes)",
+                icc.map(|b| b.len())
+            );
+        }
+    }
+}
+
+/// Opt this process out of Windows power throttling (EcoQoS), which otherwise can confine
+/// a process started from a background shell to the efficiency cores and halve the batch
+/// numbers. Enabled with PERF_PROBE_NO_THROTTLE=1.
+#[cfg(windows)]
+fn opt_out_of_power_throttling() {
+    #[repr(C)]
+    struct ProcessPowerThrottlingState {
+        version: u32,
+        control_mask: u32,
+        state_mask: u32,
+    }
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn SetProcessInformation(
+            process: *mut std::ffi::c_void,
+            class: i32,
+            info: *const std::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const PROCESS_POWER_THROTTLING: i32 = 4;
+    // Version 1; control the execution-speed bit (1) and set it off (state 0).
+    let state = ProcessPowerThrottlingState {
+        version: 1,
+        control_mask: 1,
+        state_mask: 0,
+    };
+    let ok = unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            PROCESS_POWER_THROTTLING,
+            &state as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<ProcessPowerThrottlingState>() as u32,
+        )
+    };
+    println!(
+        "power throttling opt-out: {}",
+        if ok != 0 { "ok" } else { "FAILED" }
+    );
+}
+
+#[cfg(not(windows))]
+fn opt_out_of_power_throttling() {
+    println!("power throttling opt-out: not applicable on this platform");
 }
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (mode, jpg, png, out) = (a[1].as_str(), a[2].as_str(), a[3].as_str(), a[4].as_str());
     std::fs::create_dir_all(out).unwrap();
+    if std::env::var("PERF_PROBE_NO_THROTTLE").as_deref() == Ok("1") {
+        opt_out_of_power_throttling();
+    }
     if matches!(mode, "single" | "all") {
         single(jpg, png, out);
     }
