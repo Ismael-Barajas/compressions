@@ -2,6 +2,30 @@
 
 All notable changes to Compressions are documented here.
 
+## [Unreleased]
+
+### Performance
+
+- **Image batches use every core**: JPEG, WebP and PNG batches were limited to 8 files at a time on any machine. They now run one per logical core, held back only by a memory budget for very large images. On a 32-thread machine a JPEG batch went from 34 to 70 images per second, WebP from 24 to 59 and PNG from 9 to 17. AVIF stays at 8 at a time, where it is fastest
+- **Two videos at once on NVIDIA GPUs**: with NVENC doing the encoding the CPU is mostly idle, so batches now run two videos side by side, close to double the throughput for H.264 and H.265. Software and macOS hardware encoding still run one at a time
+- **AV1 on the GPU**: AV1 now uses NVENC on cards that support it (RTX 40-series and newer), about twice the speed of the software encoder. Other cards keep using SVT-AV1
+- **GPU videos are no longer twice the size**: NVENC was given the quality slider's number on the wrong scale, so GPU output came out about twice as large as CPU output at the same setting. The same slider position now gives about the same quality and size on GPU and CPU. Videos encoded on an NVIDIA GPU will be 30–55% smaller than before at the same setting, at slightly lower (CPU-equivalent) quality; move the slider toward quality to get the old result
+- **More audio and PDF files at once on bigger machines**: audio batches run up to 16 files at a time (was 4) and PDF batches up to 12 (was 3), scaled to half the logical cores. Audio went from 2.2 to 5.6 files per second and PDF from 1.5 to about 5 on a 32-thread machine
+- **Full speed when the window is in the background (Windows)**: on CPUs with performance and efficiency cores, Windows can push background work onto the efficiency cores. The app and its encoders now ask not to be slowed down this way
+
+### Bug Fixes
+
+- **Rotated photos no longer come out sideways**: photos that rely on a rotation tag (most phone photos taken in portrait) were written with the tag removed and the pixels untouched. Images are now rotated properly on output, with metadata kept or stripped, and thumbnails are upright too
+- **Colour profiles are kept**: the ICC profile was dropped from JPEG and WebP output (and from PNG), so wide-gamut photos such as Display P3 iPhone shots looked washed out. The profile is now carried across, including when metadata is stripped
+- **Metadata survives a format change**: with "keep metadata" on, converting between formats (for example JPEG to WebP) now keeps the EXIF data
+- **10-bit and HDR videos use the GPU for H.264**: these failed on NVENC, fell back to the CPU, and then turned hardware encoding off for the rest of the session. They now encode on the GPU as 8-bit H.264
+- Two-pass GIF conversion can no longer stall waiting on keyboard input
+
+### Under the hood
+
+- FFmpeg for Windows and Linux is pinned to the 9.0 release branch instead of that day's development build, so every release ships a known FFmpeg
+- Dependency updates for open security advisories (Tauri 2.11, Vite, PostCSS, undici, rustls and others)
+
 ## [1.2.2] — 2026-10-15
 
 ### New

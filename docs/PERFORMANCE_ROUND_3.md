@@ -1,6 +1,8 @@
 # Compressions: Performance, Round 3
 
-Status: **plan, nothing below is implemented yet** (branch `perf/compression-speed`).
+Status: **implemented** on branch `perf/compression-speed`. Sections 1–10 and the work packages
+are the plan as written before the work; [Results](#results) at the end records what was built,
+what the re-measurements showed, and where the outcome differs from the plan.
 Scope: everything after v1.2.2. `docs/OPTIMIZATION_PLAN.md` and `docs/EFFICIENCY_WINS.md` cover
 rounds 1 and 2; all of that shipped and is not repeated here.
 
@@ -441,27 +443,50 @@ unknowingly on efficiency cores only and was redone. Run-to-run variance was a f
 
 ## Results
 
-Packages A, B and C are implemented on this branch. Checks on the combined branch: `cargo fmt --check`,
-`cargo clippy -- -D warnings`, `cargo test --lib` (167 passed, 1 ignored), `npx tsc --noEmit`,
-`npm run test:run` (105 passed). Nothing below was exercised in the app's own window.
+Every item is implemented on this branch. Checks on the final tree: `cargo fmt --check`,
+`cargo clippy -- -D warnings`, `cargo test --lib` (169 passed, 1 ignored), `npx tsc --noEmit`,
+`npm run test:run` (105 passed), and `npm run tauri build` (the app, MSI and NSIS installers
+build on Tauri 2.11; only the updater signature step fails locally, for lack of the private key).
 
-**What changed from the plan above**
+### Checked in the built app
+
+The release build was driven through its real UI (files dropped, Compress and Cancel All
+clicked) on the test machine: i9-13900K, RTX 4090, bundled FFmpeg 9.0.2.
+
+| Check | Result |
+|-------|--------|
+| Startup | Log shows the power-throttling opt-out and `Usable HW encoders {h264_nvenc, hevc_nvenc, av1_nvenc}` |
+| 4 × 20 s 1440p60 10-bit clips, H.264 | `encoder=h264_nvenc concurrency=2`, two FFmpeg processes throughout, 16.5 s for all four (about 154 fps each). Output is 8-bit H.264; the GPU encoder stayed enabled |
+| Same four clips, AV1 | `encoder=av1_nvenc concurrency=2`, 19.5 s. Output is 10-bit AV1 |
+| Cancel All with two AV1 encodes in flight | Both stopped, nothing else started, no FFmpeg process left, no software retry, partial outputs removed; the next batch still used `av1_nvenc` |
+| 65 × 7 MP JPEGs | Plan `workers=32 encoder_threads=1`; all 65 done in 1.0 s; peak memory 2.05 GB |
+| 16 × 48 MP JPEGs | Plan `workers=8 encoder_threads=4`; done in 2.8 s; peak memory 3.4 GB (budget 4 GiB) |
+| Photo tagged Orientation 6 | Output is 200×400, upright |
+| `IMG_2229.jpg` | Output keeps the 536-byte ICC profile |
+| 32 MP3s and 24 PDFs together | 16 audio and 12 PDF jobs at once: 4.8 audio files/s and 3.2 PDFs/s while sharing the machine (2.2 and 1.5 before, each measured alone) |
+| Pipeline view | Video lane reads "FFmpeg · up to 2 at a time" and shows "2 running" |
+
+### What changed from the plan above
 
 - **Item 1, speed-up not reproduced after the change.** The opt-out is in place for the app
   process and for every encode, image-helper and thumbnail spawn (not the short ffprobe and
-  encoder-detection spawns). Reading the child's state back shows it applied
+  encoder-detection spawns). Reading a child's state back shows it applied
   (`ControlMask=1, StateMask=0`). But on the day of implementation Windows was not demoting the
   test processes at all: libx264 on the 1440p clip ran 163–164 fps with and without the opt-out,
   three rounds each. The 105–112 fps figure above is from an earlier session. So the mechanism is
-  verified and harmless, and the size of the gain in the real app is still unmeasured. To check:
-  run the same large image batch twice, once with the window focused and once minimized, on a
-  build before and after this branch.
+  verified and harmless, and the size of the gain in the real app is still unmeasured.
+- **Item 4, mapping confirmed on two more clips and adopted.** `-cq = CRF + 5` for H.264 and
+  `CRF + 7` for HEVC. On two further clips at CRF 18, 23 and 28, H.264 NVENC scored 0.1 to 1.4
+  VMAF above libx264 at 0.76× to 1.32× its size; HEVC NVENC scored 0.3 to 0.6 below libx265 at
+  0.99× to 1.53× its size. Against the old `-cq = CRF`, output is 29–35% smaller for H.264 and
+  48–50% for HEVC on these clips (42–56% on the first two). Both new clips are cuts of the same
+  game capture, so the sample is still narrow.
 - **Item 5, AVIF keeps 8 workers.** Re-measured with 38 files: 8 workers × 4 threads 2.19 img/s,
   16 × 2 2.17, 19 × 2 2.11, 32 × 1 2.02, and 19 × 1 (what the 4 GiB budget picked) 1.39. The
   3.52 img/s figure in the item 5 table came from a batch of exactly 32 files on 32 workers, which
   hides the cost of the last files running on one thread each, and 32 workers needs about 7 GB at
   7 MP. JPEG, WebP and PNG gains held on the re-run: 34.0 → 69.5, 23.7 → 58.6 and 9.1 → 17.3 img/s.
-- **Item 6, 8-thread machines.** PDF runs 4 at once there, not 3 as today: the cap is half the
+- **Item 6, 8-thread machines.** PDF runs 4 at once there, not 3 as before: the cap is half the
   logical cores. Audio is unchanged up to 8 threads.
 - **Item 7, pixels are always upright.** Keeping metadata no longer leaves the pixels unrotated:
   the pixels are rotated in every mode and the orientation tag in the copied EXIF is reset to 1,
@@ -470,21 +495,36 @@ Packages A, B and C are implemented on this branch. Checks on the combined branc
   `IMG_2229.jpg`; outputs grew by 554 and 562 bytes). A profile whose colour space does not match
   the output pixels (CMYK, or gray on RGB output) is dropped. EXIF now also survives a format
   change (JPEG to WebP) when metadata is kept. PNG output carries no EXIF.
-- **Item 9, weaker evidence.** During implementation rustc crashed five times on this machine
-  under load (illegal instruction, LLVM errors, an impossible const-eval failure) and one FFmpeg
-  run failed with no cause captured. Random faults in unrelated programs point at the machine
-  (an i9-13900K), so the four libx264 crashes may not be FFmpeg's fault. Pinning a release build
-  is still right for reproducible releases, but the crash count is not proof of a bad nightly.
-  Rerun the 30-round overlap test on a second machine before drawing a conclusion.
+- **Item 9, pinned, but the crash is not an FFmpeg-nightly problem.** Windows and Linux now fetch
+  BtbN's `n9.0` release-branch build (9.0.2 on the day), which passes `check-sidecars.sh`. The
+  done-when test failed: the pinned build also crashed in **2 of 90** libx264 encodes (exit 139,
+  both while two encodes overlapped; 30 solo encodes were clean), the same rate as the master
+  build. During implementation rustc also crashed five times on this machine under load (illegal
+  instruction, LLVM errors, an impossible const-eval failure). Two FFmpeg builds seven months
+  apart failing alike, plus random faults in an unrelated program, point at the test machine
+  (an i9-13900K) and not at FFmpeg. Rerun the overlap test on a second machine to settle it. The
+  pin stays because it makes releases reproducible. The `Sidecars` workflow has not run on this
+  branch yet; it runs in CI on the PR.
+- **Item 10, `av1_nvenc` added.** Calibrated on four clips against SVT-AV1 preset 7:
+  `-cq = CRF + 5` scores within −0.5 to +1.0 VMAF at CRF 18 to 28 (it falls 1 to 1.7 behind at
+  CRF 35). One encode runs 183 fps against 67–100 for SVT-AV1 on the 1440p clip; two at once
+  270–304 fps. Used only when the startup verification encode passes (RTX 40-series and newer).
 
-**Known gaps, not fixed here**
+### Known gaps, not fixed here
 
+- The gain from the scheduler opt-out in the real app (window focused against minimized, before
+  and after this branch) is unmeasured.
+- VideoToolbox: nothing here was run on a Mac. Its `-q:v` mapping is uncalibrated and it stays at
+  one video at a time.
+- AV1 at a given slider value is larger than H.264 at the same value, in software and now on the
+  GPU alike, because SVT-AV1's CRF scale runs 0–63. The mapping preserves that; it does not fix it.
 - AVIF and HEIC inputs are decoded by FFmpeg through a temporary QOI file, so their orientation,
   ICC profile and EXIF do not reach the output.
 - Native AVIF output (`ravif`) carries no ICC profile.
 - A 10-bit HDR source encoded to 8-bit H.264 keeps its HDR colour tags and looks washed out; this
   was already true on the software path.
 - `benches/compression_bench.rs` fails `cargo clippy --all-targets` (it did before this branch).
+- One Cargo advisory stays open: `glib` < 0.20, pulled in by Tauri 2 on Linux.
 
 ## Implementation status
 
@@ -492,13 +532,14 @@ Packages A, B and C are implemented on this branch. Checks on the combined branc
 |------|--------|
 | Dependency bumps (replaces #10, #11) | Done, `cc47bdf` |
 | 1. Scheduler opt-out | Done, `1db68b9`, `7e98325`. Gain in the app unmeasured |
-| 2. NVENC 10-bit | Done, `1eb5548`. Verified with the bundled FFmpeg by hand |
-| 3. NVENC two at once | Done, `aaf5131`. Unit-tested; not run in the app |
-| 4. NVENC quality mapping | Awaiting decision |
+| 2. NVENC 10-bit | Done, `1eb5548`. Confirmed in the app |
+| 3. NVENC two at once | Done, `aaf5131`. Confirmed in the app |
+| 4. NVENC quality mapping | Done, `a9a6715` |
 | 5. Image workers | Done, `275967a`, `ff2b7c8`. AVIF stays at 8 |
-| 6. Audio/PDF caps | Done, `1db68b9` |
+| 6. Audio/PDF caps | Done, `1db68b9`. Confirmed in the app |
 | 7. Orientation | Done, `bd3d3e7`, `44d7bc7` |
 | 8. ICC profile | Done, `bd3d3e7` |
-| 9. Pin FFmpeg | Awaiting decision |
-| 10. Small items | `-nostdin` done, `1eb5548`. `av1_nvenc` awaiting decision |
-| F. Integration | Not started: `npm run tauri build`, manual checks, CHANGELOG, `.claude/CLAUDE.md`, `PLAN.md` |
+| 9. Pin FFmpeg | Done, `5026d22`. Does not cure the crash |
+| 10. Small items | Done: `-nostdin` `1eb5548`, `av1_nvenc` `a9a6715` |
+| E. PRs #10, #11, #13 | Closed |
+| F. Integration | Done: full build, in-app checks, CHANGELOG, `.claude/CLAUDE.md`, `PLAN.md` |
