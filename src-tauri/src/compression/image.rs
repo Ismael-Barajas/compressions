@@ -41,23 +41,27 @@ pub fn compress_with_threads(
     let effective_format = options.format.resolve_for_input(input);
 
     // EXIF goes across only when metadata is kept, and only JPEG and WebP outputs
-    // carry it. PNG gets none: its pixels are always rotated below, so a copied
-    // orientation tag would rotate it a second time.
+    // carry it.
     let carries_exif = matches!(effective_format, ImageFormat::Jpeg | ImageFormat::WebP);
-    let exif_to_copy = if preserve && carries_exif {
+    let mut exif_to_copy = if preserve && carries_exif {
         decoded.exif
     } else {
         None
     };
 
-    // A copied EXIF block keeps its orientation tag and viewers rotate for us, so
-    // the pixels stay as they are (as before). Otherwise rotate the pixels, or
-    // the output would display sideways once the tag is gone.
+    // Output pixels are always upright: without this a stripped output displays
+    // sideways once the tag is gone. A copied EXIF block gets its orientation tag
+    // reset, so viewers that honour the tag do not rotate a second time and
+    // viewers that ignore it (common for WebP) still show the image upright.
     let mut img = decoded.image;
-    let needs_rotation = exif_to_copy.is_none() && decoded.orientation != Orientation::NoTransforms;
+    let needs_rotation = decoded.orientation != Orientation::NoTransforms;
     if needs_rotation {
         tracing::debug!(input = %input, orientation = ?decoded.orientation, "Applying EXIF orientation to pixels");
         img.apply_orientation(decoded.orientation);
+        if let Some(exif) = exif_to_copy.as_mut() {
+            // None means the block held no readable tag, so there is nothing to reset.
+            let _ = Orientation::remove_from_exif_chunk(exif);
+        }
     }
 
     // Resize after rotating, so a fit box means what the user sees.
@@ -266,8 +270,8 @@ fn encode_jpeg(
 }
 
 /// Add the ICC profile and EXIF block (either may be absent) to an encoded JPEG.
-/// An error rather than a silent fallback: the caller left the pixels unrotated
-/// because it expects the EXIF orientation tag to arrive.
+/// An error rather than a silent fallback, so metadata the user asked to keep is
+/// never dropped without a trace.
 fn embed_jpeg_metadata(
     data: Vec<u8>,
     icc: Option<Vec<u8>>,
@@ -1004,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn jpeg_keeps_the_tag_and_is_not_rotated_twice_when_metadata_is_kept() {
+    fn kept_exif_has_its_orientation_reset_so_nothing_rotates_twice() {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("rotated.jpg");
         let output = dir.path().join("out.jpg");
@@ -1019,10 +1023,34 @@ mod tests {
         .unwrap();
 
         let (img, _, exif) = inspect(&output);
-        // Stored pixels unchanged; the copied tag tells viewers to rotate once.
-        assert_eq!((img.width(), img.height()), (40, 20));
+        // Pixels are upright and the copied EXIF says "no rotation needed".
+        assert_eq!((img.width(), img.height()), (20, 40));
+        assert!(top_is_red(&img), "pixels were not rotated clockwise");
         let tag = exif.as_deref().and_then(Orientation::from_exif_chunk);
-        assert_eq!(tag, Some(Orientation::Rotate90));
+        assert_eq!(tag, Some(Orientation::NoTransforms));
+    }
+
+    #[test]
+    fn rotated_jpeg_to_webp_is_upright_when_metadata_is_kept() {
+        // Many viewers ignore EXIF orientation in WebP, so the pixels must carry it.
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("rotated.jpg");
+        let output = dir.path().join("out.webp");
+        write_tagged_jpeg(&input, 6, &fake_rgb_icc());
+
+        compress_with_threads(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &opts_with_strip(ImageFormat::WebP, false),
+            1,
+        )
+        .unwrap();
+
+        let (img, _, exif) = inspect(&output);
+        assert_eq!((img.width(), img.height()), (20, 40));
+        assert!(top_is_red(&img), "pixels were not rotated clockwise");
+        let tag = exif.as_deref().and_then(Orientation::from_exif_chunk);
+        assert_eq!(tag, Some(Orientation::NoTransforms));
     }
 
     #[test]
@@ -1043,7 +1071,7 @@ mod tests {
             let (img, _, exif) = inspect(&output);
             assert_eq!((img.width(), img.height()), (20, 40), "strip={strip}");
             assert!(top_is_red(&img), "strip={strip}");
-            // No EXIF on PNG: a copied tag would rotate it a second time.
+            // PNG output carries no EXIF.
             assert!(exif.is_none(), "strip={strip}");
         }
     }
