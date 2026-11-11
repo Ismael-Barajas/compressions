@@ -91,7 +91,9 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           TARGET="x86_64-unknown-linux-gnu"
-          curl -L "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" -o /tmp/ffmpeg-linux.tar.xz
+          # Pinned to an FFmpeg release branch, not master. Keep in step with scripts/download-ffmpeg.ps1 and .sh.
+          FFMPEG_BRANCH="9.0"
+          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n${FFMPEG_BRANCH}-latest-linux64-gpl-${FFMPEG_BRANCH}.tar.xz" -o /tmp/ffmpeg-linux.tar.xz
           tar xf /tmp/ffmpeg-linux.tar.xz -C /tmp
           EXTRACT_DIR=$(find /tmp -maxdepth 1 -type d -name "ffmpeg-*" | head -1)
           cp "$EXTRACT_DIR/bin/ffmpeg" "src-tauri/binaries/ffmpeg-$TARGET"
