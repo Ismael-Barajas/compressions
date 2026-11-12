@@ -8,11 +8,16 @@ $BinDir = Join-Path $ScriptDir "..\src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 $Target = "x86_64-pc-windows-msvc"
-$Url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+# Pinned to an FFmpeg release branch. This used to fetch `master`, so every release
+# shipped whatever FFmpeg's development branch was that day. To move to a newer
+# branch, change it here, in download-ffmpeg.sh and in .github/workflows/release.yml
+# (Linux), then rerun scripts/check-sidecars.sh and the manual video checks.
+$FfmpegBranch = "9.0"
+$Url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n$FfmpegBranch-latest-win64-gpl-$FfmpegBranch.zip"
 $TempZip = Join-Path $env:TEMP "ffmpeg-win.zip"
 $TempDir = Join-Path $env:TEMP "ffmpeg_win_extract"
 
-Write-Host "Downloading FFmpeg for Windows..."
+Write-Host "Downloading FFmpeg $FfmpegBranch for Windows..."
 Invoke-WebRequest -Uri $Url -OutFile $TempZip
 
 Write-Host "Extracting..."

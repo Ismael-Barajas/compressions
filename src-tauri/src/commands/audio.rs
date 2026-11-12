@@ -11,8 +11,10 @@ use crate::types::{
 use crate::validate::{validate_audio_compression_options, validate_audio_options};
 
 /// Audio encoders (libmp3lame, aac, libopus, flac, pcm) are single-threaded, so a
-/// batch runs several files at once to use the remaining cores.
-const AUDIO_BATCH_CONCURRENCY_CAP: usize = 4;
+/// batch runs several files at once: half the logical cores, between these bounds
+/// (throughput stops rising at half the cores on a 32-thread machine).
+pub(crate) const AUDIO_BATCH_MIN: usize = 4;
+pub(crate) const AUDIO_BATCH_MAX: usize = 16;
 
 async fn run_audio_job(
     app: &AppHandle,
@@ -121,7 +123,7 @@ pub async fn extract_audio_batch(
     options: AudioExtractionOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let concurrency = single_threaded_batch_concurrency(AUDIO_BATCH_CONCURRENCY_CAP);
+    let concurrency = single_threaded_batch_concurrency(AUDIO_BATCH_MIN, AUDIO_BATCH_MAX);
     Ok(run_batch(&app, files, concurrency, move |app, entry| {
         let options = options.clone();
         let on_progress = on_progress.clone();
@@ -147,7 +149,7 @@ pub async fn compress_audio_batch(
     options: AudioCompressionOptions,
     on_progress: Channel<ProgressEvent>,
 ) -> Result<Vec<CompressionResult>, String> {
-    let concurrency = single_threaded_batch_concurrency(AUDIO_BATCH_CONCURRENCY_CAP);
+    let concurrency = single_threaded_batch_concurrency(AUDIO_BATCH_MIN, AUDIO_BATCH_MAX);
     Ok(run_batch(&app, files, concurrency, move |app, entry| {
         let options = options.clone();
         let on_progress = on_progress.clone();

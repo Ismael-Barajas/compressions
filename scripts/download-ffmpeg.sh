@@ -56,9 +56,12 @@ case "$OS" in
 
   Linux|MINGW*|MSYS*|CYGWIN*)
     TARGET="x86_64-pc-windows-msvc"
-    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+    # Pinned to an FFmpeg release branch, not `master`. Keep in step with
+    # download-ffmpeg.ps1 and the Linux step in .github/workflows/release.yml.
+    FFMPEG_BRANCH="9.0"
+    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n${FFMPEG_BRANCH}-latest-win64-gpl-${FFMPEG_BRANCH}.zip"
 
-    echo "Downloading FFmpeg for Windows..."
+    echo "Downloading FFmpeg $FFMPEG_BRANCH for Windows..."
     curl -L "$FFMPEG_URL" -o /tmp/ffmpeg-win.zip
     unzip -o /tmp/ffmpeg-win.zip -d /tmp/ffmpeg_win_extract
 

@@ -15,7 +15,7 @@ use std::time::Instant;
 use tauri::{ipc::Channel, AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use crate::compression::progress::{ProgressParser, ProgressThrottle};
@@ -162,6 +162,9 @@ pub async fn run_sidecar(
         .args(spec.args)
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", spec.sidecar, e))?;
+
+    // Windowless sidecars are "background" to Windows and land on the E-cores.
+    crate::qos::opt_out_child(child.pid());
 
     if let Err(e) = register_job(app, &ctx.job_id, child, &ctx.output) {
         // Never leave an unregistered child running.
@@ -485,12 +488,21 @@ pub fn send_started(ctx: &JobContext, on_progress: &Channel<ProgressEvent>) {
 
 /// Number of sidecar jobs to run at once for encoders that are single-threaded
 /// (audio codecs, Ghostscript). Leaves headroom for the UI and the webview.
-pub fn single_threaded_batch_concurrency(cap: usize) -> usize {
-    std::thread::available_parallelism()
+///
+/// Measured throughput keeps rising up to half the logical cores, so the cap is
+/// `cores / 2`, kept between `min_cap` and `max_cap`.
+pub fn single_threaded_batch_concurrency(min_cap: usize, max_cap: usize) -> usize {
+    let cores = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(2)
-        .saturating_sub(1)
-        .clamp(1, cap)
+        .unwrap_or(2);
+    let concurrency = batch_concurrency_for_cores(cores, min_cap, max_cap);
+    tracing::info!(cores, concurrency, "Single-threaded batch concurrency");
+    concurrency
+}
+
+fn batch_concurrency_for_cores(cores: usize, min_cap: usize, max_cap: usize) -> usize {
+    let cap = (cores / 2).clamp(min_cap, max_cap);
+    cores.saturating_sub(1).clamp(1, cap)
 }
 
 /// While the queue is paused, hold off starting the next file. Jobs already running
@@ -509,6 +521,39 @@ async fn wait_while_paused(pause: &AtomicBool, cancel: &AtomicBool) {
     }
 }
 
+/// Wait until the next entry may start: holding as many permits as `plan` asks for
+/// (capped at `total_permits`), not paused, and not cancelled. Returns `None` on
+/// Cancel All. Permits are taken one wait at a time and `plan` re-asked after each,
+/// so the answer that is returned is the one current when the entry starts. Only
+/// the batch loop takes permits, so a partly filled request cannot deadlock: it is
+/// completed as running entries finish.
+async fn acquire_slot<T>(
+    semaphore: &Arc<Semaphore>,
+    total_permits: u32,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
+    mut plan: impl FnMut() -> (u32, T),
+) -> Option<(OwnedSemaphorePermit, T)> {
+    let mut permit = Arc::clone(semaphore).acquire_owned().await.ok()?;
+    loop {
+        wait_while_paused(pause, cancel).await;
+        if cancel.load(Ordering::SeqCst) {
+            return None;
+        }
+        let (wanted, planned) = plan();
+        let wanted = wanted.clamp(1, total_permits);
+        let held = u32::try_from(permit.num_permits()).unwrap_or(u32::MAX);
+        if wanted <= held {
+            return Some((permit, planned));
+        }
+        let more = Arc::clone(semaphore)
+            .acquire_many_owned(wanted - held)
+            .await
+            .ok()?;
+        permit.merge(more);
+    }
+}
+
 /// Run `job` for every entry with at most `max_concurrent` in flight. Results are
 /// returned in input order and entries start in input order. Honors `PauseFlag`
 /// (no new entry starts while paused) and `CancelFlag` (entries that have not
@@ -524,8 +569,39 @@ where
     F: Fn(AppHandle, BatchEntry) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<CompressionResult, String>> + Send + 'static,
 {
+    let permits = u32::try_from(max_concurrent).unwrap_or(u32::MAX);
+    run_batch_planned(
+        app,
+        files,
+        permits,
+        |_| (1, ()),
+        move |app, entry, ()| job(app, entry),
+    )
+    .await
+}
+
+/// [`run_batch`] where entries are not all the same weight. Just before an entry
+/// starts, `plan` says how many of the `total_permits` it needs and returns a value
+/// handed to `job` (video: the encoder it will use). An entry that needs more
+/// permits than are free waits, still in queue order and still unstarted, until
+/// running entries finish. `plan` is asked again after every wait, so a change in
+/// the meantime (an encoder disabled, hardware detection finishing) is seen.
+pub async fn run_batch_planned<P, T, F, Fut>(
+    app: &AppHandle,
+    files: Vec<BatchEntry>,
+    total_permits: u32,
+    plan: P,
+    job: F,
+) -> Vec<CompressionResult>
+where
+    P: Fn(&AppHandle) -> (u32, T) + Send + Sync,
+    T: Send + 'static,
+    F: Fn(AppHandle, BatchEntry, T) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<CompressionResult, String>> + Send + 'static,
+{
     let job = Arc::new(job);
-    let semaphore = Arc::new(Semaphore::new(max_concurrent.max(1)));
+    let total_permits = total_permits.max(1);
+    let semaphore = Arc::new(Semaphore::new(total_permits as usize));
     let cancel_flag = app
         .try_state::<CancelFlag>()
         .map(|s| s.0.clone())
@@ -543,20 +619,20 @@ where
     let mut handles = Vec::with_capacity(files.len());
     let mut entry_paths = Vec::with_capacity(files.len());
     for entry in files {
-        let Ok(permit) = Arc::clone(&semaphore).acquire_owned().await else {
-            break;
-        };
-        wait_while_paused(&pause_flag, &cancel_flag).await;
-        if cancel_flag.load(Ordering::SeqCst) {
+        let slot = acquire_slot(&semaphore, total_permits, &pause_flag, &cancel_flag, || {
+            plan(app)
+        })
+        .await;
+        let Some((permit, planned)) = slot else {
             tracing::info!(input = %entry.input, "Cancel All: not starting remaining batch entries");
             break;
-        }
+        };
         let app = app.clone();
         let job = Arc::clone(&job);
         entry_paths.push((entry.input.clone(), entry.output.clone()));
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            job(app, entry).await
+            job(app, entry, planned).await
         }));
     }
 
@@ -601,6 +677,96 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::atomic::AtomicU32;
+    use std::time::Duration;
+
+    /// True when `fut` has not finished within a short wait.
+    async fn still_waiting<F: Future>(fut: &mut std::pin::Pin<Box<F>>) -> bool {
+        tokio::time::timeout(Duration::from_millis(150), fut.as_mut())
+            .await
+            .is_err()
+    }
+
+    #[tokio::test]
+    async fn two_light_entries_run_together_and_a_third_waits() {
+        let gate = Arc::new(Semaphore::new(2));
+        let (pause, cancel) = (AtomicBool::new(false), AtomicBool::new(false));
+        let a = acquire_slot(&gate, 2, &pause, &cancel, || (1, "a")).await;
+        let b = acquire_slot(&gate, 2, &pause, &cancel, || (1, "b")).await;
+        assert!(a.is_some() && b.is_some());
+
+        let mut c = Box::pin(acquire_slot(&gate, 2, &pause, &cancel, || (1, "c")));
+        assert!(still_waiting(&mut c).await);
+        drop(a);
+        let (_permit, planned) = c.await.unwrap();
+        assert_eq!(planned, "c");
+    }
+
+    #[tokio::test]
+    async fn heavy_entry_waits_for_the_running_light_one() {
+        let gate = Arc::new(Semaphore::new(2));
+        let (pause, cancel) = (AtomicBool::new(false), AtomicBool::new(false));
+        let light = acquire_slot(&gate, 2, &pause, &cancel, || (1, ())).await;
+
+        // A software encode needs both permits: it holds one and waits for the other,
+        // so no third entry can slip in beside the NVENC one either.
+        let mut heavy = Box::pin(acquire_slot(&gate, 2, &pause, &cancel, || (2, ())));
+        assert!(still_waiting(&mut heavy).await);
+        assert_eq!(gate.available_permits(), 0);
+        drop(light);
+        let (permit, ()) = heavy.await.unwrap();
+        assert_eq!(permit.num_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn plan_is_asked_again_after_waiting() {
+        let gate = Arc::new(Semaphore::new(2));
+        let (pause, cancel) = (AtomicBool::new(false), AtomicBool::new(false));
+        let running = acquire_slot(&gate, 2, &pause, &cancel, || (1, 0)).await;
+
+        // Asked first while the encoder looks unusable (needs 2), then the answer
+        // changes while it waits; what the entry starts with is the latest answer.
+        let wanted = AtomicU32::new(2);
+        let asked = AtomicU32::new(0);
+        let mut next = Box::pin(acquire_slot(&gate, 2, &pause, &cancel, || {
+            let n = asked.fetch_add(1, Ordering::SeqCst) + 1;
+            (wanted.load(Ordering::SeqCst), n)
+        }));
+        assert!(still_waiting(&mut next).await);
+        wanted.store(1, Ordering::SeqCst);
+        drop(running);
+        let (_permit, asked_count) = next.await.unwrap();
+        assert_eq!(asked_count, 2);
+    }
+
+    #[tokio::test]
+    async fn waiting_entry_honours_pause_and_cancel() {
+        let gate = Arc::new(Semaphore::new(2));
+        let (pause, cancel) = (AtomicBool::new(true), AtomicBool::new(false));
+        let mut paused = Box::pin(acquire_slot(&gate, 2, &pause, &cancel, || (1, ())));
+        assert!(still_waiting(&mut paused).await);
+        pause.store(false, Ordering::SeqCst);
+        assert!(paused.await.is_some());
+
+        // Cancel All while waiting for permits: the entry never starts.
+        let held = acquire_slot(&gate, 2, &pause, &cancel, || (2, ())).await;
+        let mut waiting = Box::pin(acquire_slot(&gate, 2, &pause, &cancel, || (1, ())));
+        assert!(still_waiting(&mut waiting).await);
+        cancel.store(true, Ordering::SeqCst);
+        drop(held);
+        assert!(waiting.await.is_none());
+    }
+
+    #[tokio::test]
+    async fn plan_asking_for_more_than_exists_is_capped() {
+        let gate = Arc::new(Semaphore::new(2));
+        let (pause, cancel) = (AtomicBool::new(false), AtomicBool::new(false));
+        let (permit, ()) = acquire_slot(&gate, 2, &pause, &cancel, || (9, ()))
+            .await
+            .unwrap();
+        assert_eq!(permit.num_permits(), 2);
+    }
 
     #[tokio::test]
     async fn keep_original_replaces_bloated_output() {
@@ -718,8 +884,32 @@ mod tests {
 
     #[test]
     fn batch_concurrency_is_bounded() {
-        let c = single_threaded_batch_concurrency(4);
-        assert!((1..=4).contains(&c));
-        assert_eq!(single_threaded_batch_concurrency(1), 1);
+        let c = single_threaded_batch_concurrency(4, 16);
+        assert!((1..=16).contains(&c));
+        assert_eq!(single_threaded_batch_concurrency(1, 1), 1);
+    }
+
+    #[test]
+    fn audio_batch_concurrency_by_core_count() {
+        use crate::commands::audio::{AUDIO_BATCH_MAX, AUDIO_BATCH_MIN};
+        let audio = |cores| batch_concurrency_for_cores(cores, AUDIO_BATCH_MIN, AUDIO_BATCH_MAX);
+        assert_eq!(audio(2), 1);
+        assert_eq!(audio(4), 3);
+        assert_eq!(audio(8), 4);
+        assert_eq!(audio(16), 8);
+        assert_eq!(audio(32), 16);
+        assert_eq!(audio(64), 16);
+    }
+
+    #[test]
+    fn pdf_batch_concurrency_by_core_count() {
+        use crate::commands::pdf::{PDF_BATCH_MAX, PDF_BATCH_MIN};
+        let pdf = |cores| batch_concurrency_for_cores(cores, PDF_BATCH_MIN, PDF_BATCH_MAX);
+        assert_eq!(pdf(2), 1);
+        assert_eq!(pdf(4), 3);
+        // 8 cores: cap = 8/2 = 4 (the old fixed cap was 3).
+        assert_eq!(pdf(8), 4);
+        assert_eq!(pdf(16), 8);
+        assert_eq!(pdf(32), 12);
     }
 }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use image::metadata::Orientation;
 use image::DynamicImage;
 use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_shell::process::CommandEvent;
@@ -59,7 +60,8 @@ fn is_jpeg_path(path: &str) -> bool {
 /// thumbnail box, skipping most of the IDCT and color conversion: a 12 MP photo
 /// decodes to ~0.6 MB of pixels instead of ~36 MB. Returns `None` for anything
 /// unusual (CMYK, 16-bit, decode errors) so the caller falls back to a full decode.
-fn decode_jpeg_scaled(path: &str, min_side: u16) -> Option<DynamicImage> {
+/// The orientation comes from the EXIF block the decoder already parsed.
+fn decode_jpeg_scaled(path: &str, min_side: u16) -> Option<(DynamicImage, Orientation)> {
     use jpeg_decoder::{Decoder, PixelFormat};
 
     let file = std::fs::File::open(path).ok()?;
@@ -68,14 +70,21 @@ fn decode_jpeg_scaled(path: &str, min_side: u16) -> Option<DynamicImage> {
     let (w, h) = decoder.scale(min_side, min_side).ok()?;
     let pixels = decoder.decode().ok()?;
     let (w, h) = (u32::from(w), u32::from(h));
-    match decoder.info()?.pixel_format {
+    let img = match decoder.info()?.pixel_format {
         PixelFormat::RGB24 => image::RgbImage::from_raw(w, h, pixels).map(DynamicImage::ImageRgb8),
         PixelFormat::L8 => image::GrayImage::from_raw(w, h, pixels).map(DynamicImage::ImageLuma8),
         _ => None,
-    }
+    }?;
+    let orientation = decoder
+        .exif_data()
+        .and_then(Orientation::from_exif_chunk)
+        .unwrap_or(Orientation::NoTransforms);
+    Some((img, orientation))
 }
 
 /// Generate a thumbnail for an image using the `image` crate, write to disk.
+/// The thumbnail is written without EXIF, so the orientation is applied to its
+/// pixels (after shrinking, where rotating is cheap).
 async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let scaled = if is_jpeg_path(&path) {
@@ -83,11 +92,15 @@ async fn thumbnail_image(path: String, out_path: PathBuf) -> Result<(), String> 
         } else {
             None
         };
-        let img = match scaled {
-            Some(img) => img,
-            None => crate::compression::image::open_image_bounded(&path)?,
+        let (img, orientation) = match scaled {
+            Some(scaled) => scaled,
+            None => {
+                let decoded = crate::compression::image::decode_image_bounded(&path, false)?;
+                (decoded.image, decoded.orientation)
+            }
         };
-        let thumb = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
+        let mut thumb = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
+        thumb.apply_orientation(orientation);
         let mut buf = Vec::new();
         let mut cursor = Cursor::new(&mut buf);
         thumb
@@ -141,6 +154,7 @@ async fn thumbnail_via_decode(
         .args(&args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
+    crate::qos::opt_out_child(child.pid());
 
     let mut stderr_lines = Vec::new();
     let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
@@ -213,6 +227,7 @@ async fn thumbnail_ffmpeg(
         .args(&args)
         .spawn()
         .map_err(|e| format!("Failed to spawn FFmpeg: {e}"))?;
+    crate::qos::opt_out_child(child.pid());
 
     let mut stderr_lines = Vec::new();
     let recv_result = timeout(FFMPEG_THUMB_TIMEOUT, async {
@@ -373,7 +388,7 @@ mod tests {
                 image::Rgb([(x % 256) as u8, (y % 256) as u8, 90])
             })),
         );
-        let img = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
+        let (img, _) = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
         // A fit-inside thumbnail only needs the long side to reach 160 px, so 1/8
         // (200x150) is enough and still thumbnails to the same 160x120.
         assert_eq!((img.width(), img.height()), (200, 150));
@@ -390,7 +405,7 @@ mod tests {
                 image::Luma([(x % 256) as u8])
             })),
         );
-        let img = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
+        let (img, _) = decode_jpeg_scaled(path.to_str().unwrap(), THUMB_SIZE as u16).unwrap();
         assert!(matches!(img, DynamicImage::ImageLuma8(_)));
     }
 
@@ -417,5 +432,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(image::image_dimensions(&out).unwrap(), (160, 80));
+    }
+
+    /// Little-endian TIFF block with a single Orientation = 6 entry.
+    const ORIENTATION_6_EXIF: [u8; 26] = [
+        0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[tokio::test]
+    async fn rotated_jpeg_thumbnail_is_upright() {
+        use img_parts::ImageEXIF;
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain.jpg");
+        write_jpeg(
+            &plain,
+            DynamicImage::ImageRgb8(image::RgbImage::new(2000, 1000)),
+        );
+        let mut jpeg =
+            img_parts::jpeg::Jpeg::from_bytes(std::fs::read(&plain).unwrap().into()).unwrap();
+        jpeg.set_exif(Some(ORIENTATION_6_EXIF.to_vec().into()));
+        let path = dir.path().join("rotated.jpg");
+        std::fs::write(&path, jpeg.encoder().bytes()).unwrap();
+
+        let out = dir.path().join("thumb.jpg");
+        thumbnail_image(path.to_string_lossy().to_string(), out.clone())
+            .await
+            .unwrap();
+        assert_eq!(image::image_dimensions(&out).unwrap(), (80, 160));
+    }
+
+    #[tokio::test]
+    async fn rotated_png_thumbnail_is_upright() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgb8(image::RgbImage::new(400, 200))
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        let mut png = img_parts::png::Png::from_bytes(bytes.into()).unwrap();
+        // eXIf right after IHDR: the decoder only sees chunks that precede IDAT.
+        png.chunks_mut().insert(
+            1,
+            img_parts::png::PngChunk::new(*b"eXIf", ORIENTATION_6_EXIF.to_vec().into()),
+        );
+        let path = dir.path().join("rotated.png");
+        std::fs::write(&path, png.encoder().bytes()).unwrap();
+
+        let out = dir.path().join("thumb.jpg");
+        thumbnail_image(path.to_string_lossy().to_string(), out.clone())
+            .await
+            .unwrap();
+        assert_eq!(image::image_dimensions(&out).unwrap(), (80, 160));
     }
 }

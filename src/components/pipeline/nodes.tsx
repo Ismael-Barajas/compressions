@@ -61,7 +61,8 @@ export const LaneNode = memo(function LaneNode({ data }: NodeProps<LaneNodeType>
   let status: ReactNode;
   if (isEmpty) {
     status = <span className="truncate">{emptyText}</span>;
-  } else if (isRunning && mediaType === "video") {
+  } else if (isRunning && mediaType === "video" && processing === 1) {
+    // Name and percent only when one video runs; with two (NVENC) it falls through to "2 running".
     status = <CurrentVideo fallback={`${processing} running`} />;
   } else if (isRunning) {
     status = <span className="truncate">{processing} running</span>;
@@ -103,7 +104,7 @@ export const LaneNode = memo(function LaneNode({ data }: NodeProps<LaneNodeType>
   );
 });
 
-/** Name and percent of the running video. Returns primitives so unrelated ticks don't re-render. */
+/** Name and percent of the one running video. Returns primitives so unrelated ticks don't re-render. */
 function CurrentVideo({ fallback }: { fallback: string }) {
   const current = useCompressionStore(
     useShallow((s) => {
