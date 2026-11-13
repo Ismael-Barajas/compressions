@@ -2,6 +2,22 @@
 
 All notable changes to Compressions are documented here.
 
+## [1.4.0] — 2026-11-12
+
+### New
+
+- **New logo: duck feet**: the app icon, favicon, every platform icon and the mark in the header are now two duck feet, in the same gold on near-black as before
+- **The header duck waddles**: hover the logo and the feet follow your pointer along the header, wandering a little as they go and leaving footprints that fade after a few steps. Move the pointer out of the header and they walk back to their place. It stops short of the header buttons, and stays still if your system asks for reduced motion
+- **Move around the pipeline view**: drag the boxes where you like (their connections follow), pan and zoom the canvas, all within limits so nothing gets lost off screen. A Reset layout button puts everything back
+
+### Changed
+
+- **Cleaner pipeline connections**: the little arrowheads that blended into the lines are gone; each line now ends in a short notch on the box it feeds
+
+### Bug Fixes
+
+- **Toolbar no longer shifts between views**: the show/hide thumbnails button now sits left of the List | Pipeline toggle, so switching to Pipeline view hides it without moving the other buttons
+
 ## [1.3.0] — 2026-11-11
 
 ### Performance
