@@ -6,6 +6,8 @@ import type { MediaType } from "../../types/compression";
 export type FlowEdgeData = { lane?: MediaType; side: "in" | "out" | "final" };
 export type FlowEdgeType = Edge<FlowEdgeData, "flow">;
 
+const NOTCH_HALF_LENGTH = 5;
+
 export const FlowEdge = memo(function FlowEdge({
   data,
   sourceX,
@@ -27,21 +29,22 @@ export const FlowEdge = memo(function FlowEdge({
     return side === "in" ? running && !s.isPaused : running;
   });
 
+  // No arrowhead: the layout already shows the direction (left to right, then down
+  // into output), and heads cluttered the spots where several lines meet a node.
+  // Instead a short thick notch sits on the node's edge where the line lands,
+  // across the line: upright on a left handle, flat on a top handle.
+  const intoTop = targetPosition === Position.Top;
+  const notch = intoTop
+    ? `M ${targetX - NOTCH_HALF_LENGTH},${targetY} L ${targetX + NOTCH_HALF_LENGTH},${targetY}`
+    : `M ${targetX},${targetY - NOTCH_HALF_LENGTH} L ${targetX},${targetY + NOTCH_HALF_LENGTH}`;
+
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
   const stateClass = active ? "is-active" : "";
-
-  // Arrowhead drawn inline rather than as an SVG marker: React Flow markers are
-  // shared <defs> with fixed inline colors, so they can't follow this edge's class.
-  // Points down into a top handle (size check -> output), otherwise right.
-  const pointsDown = targetPosition === Position.Top;
-  const arrow = pointsDown
-    ? `M ${targetX - 4},${targetY - 5} L ${targetX},${targetY} L ${targetX + 4},${targetY - 5}`
-    : `M ${targetX - 5},${targetY - 4} L ${targetX},${targetY} L ${targetX - 5},${targetY + 4}`;
 
   return (
     <>
       <BaseEdge path={path} interactionWidth={0} className={`pipeline-edge ${stateClass}`} />
-      <path d={arrow} className={`pipeline-edge-arrow ${stateClass}`} />
+      <path d={notch} className={`pipeline-edge-notch ${stateClass}`} />
     </>
   );
 });

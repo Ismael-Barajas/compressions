@@ -1,7 +1,8 @@
-<svg width="1024" height="1024" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-  <!-- Compressions app icon: a chevron bearing down on a slab, pressing it thinner. -->
-  <rect width="100" height="100" rx="22" fill="#0e0e10"/>
-  <polyline points="20,22 50,50 80,22" fill="none" stroke="#d4a053" stroke-width="13" stroke-linejoin="miter" stroke-linecap="butt"/>
-  <rect x="20" y="66" width="60" height="9" fill="#d4a053"/>
-  <rect x="30" y="80" width="40" height="6" fill="#d4a053"/>
+<svg width="1024" height="1024" viewBox="0 0 480 480" xmlns="http://www.w3.org/2000/svg">
+  <!-- Compressions app icon: two duck feet in the app's gold accent on its dark background. -->
+  <rect width="480" height="480" rx="106" fill="#0e0e10"/>
+  <g transform="translate(240 240) scale(1.3) translate(-240 -240)" fill="#d4a053" stroke="#d4a053" stroke-width="26" stroke-linejoin="round">
+    <path transform="matrix(0.533663 -0.133057 0.133057 0.533663 -1.07719 209.585)" d="M240 360 L140 180 Q192 208 240 136 Q288 208 340 180 Z"/>
+    <path transform="matrix(0.533663 0.133057 -0.133057 0.533663 224.919 5.71797)" d="M240 360 L140 180 Q192 208 240 136 Q288 208 340 180 Z"/>
+  </g>
 </svg>
