@@ -8,10 +8,6 @@
   font-family: var(--font-sans);
 }
 
-.pipeline .react-flow__pane {
-  cursor: default;
-}
-
 /* Handles only anchor edges. */
 .pipeline .react-flow__handle.pipeline-handle {
   width: 1px;
@@ -119,18 +115,20 @@
 
 /* ---- Edges ---- */
 
-.pipeline-edge-arrow {
+.pipeline-edge-notch {
   fill: none;
   stroke: var(--border-hover);
-  stroke-width: 1;
+  stroke-width: 2.5;
   stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
-.react-flow__edge-path.pipeline-edge.is-active,
-.pipeline-edge-arrow.is-active {
+.react-flow__edge-path.pipeline-edge.is-active {
   stroke: var(--accent);
   stroke-width: 1.5;
+}
+
+.pipeline-edge-notch.is-active {
+  stroke: var(--accent);
 }
 
 /* ---- Motion (only when the user hasn't asked for less) ---- */
@@ -147,7 +145,7 @@
   }
 
   .react-flow__edge-path.pipeline-edge,
-  .pipeline-edge-arrow {
+  .pipeline-edge-notch {
     transition: stroke 150ms ease;
   }
 

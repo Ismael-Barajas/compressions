@@ -1,14 +1,18 @@
-import { useEffect, useId } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import {
   Background,
   BackgroundVariant,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
+  useNodesState,
   useReactFlow,
   useStore,
+  type CoordinateExtent,
   type Edge,
   type Node,
 } from "@xyflow/react";
+import { RotateCcw } from "lucide-react";
 import "@xyflow/react/dist/base.css";
 import "./pipeline.css";
 import { CheckNode, LaneNode, OutputNode, QueueNode, type LaneData } from "./nodes";
@@ -31,7 +35,7 @@ const LANE_W = 160;
 const NODE_H = 72; // queue, size check, output
 const END_X = 320; // size check + output column
 const END_W = 116;
-const END_GAP = 48; // vertical room for the check -> output arrow
+const END_GAP = 48; // vertical room for the check -> output edge
 const END_Y = (LANES_H - (2 * NODE_H + END_GAP)) / 2; // the pair is centered on the lanes
 
 const LANES: { mediaType: MediaType; title: string; engine: string; emptyText: string }[] = [
@@ -78,12 +82,28 @@ const edges: Edge<FlowEdgeData>[] = [
 const nodeTypes = { queue: QueueNode, lane: LaneNode, check: CheckNode, result: OutputNode };
 const edgeTypes = { flow: FlowEdge };
 
-// Pixel padding (not a fraction) so small panels don't lose extra room to it.
-const FIT_VIEW_OPTIONS = { padding: "12px", duration: 0 } as const;
+// Pixel padding (not a fraction) so small panels don't lose extra room to it. The fit
+// stays at most 1.2x even though the user may zoom in further.
+const FIT_VIEW_OPTIONS = { padding: "12px", duration: 0, maxZoom: 1.2 } as const;
 const PRO_OPTIONS = { hideAttribution: true };
 
-/** Refits the graph whenever the panel resizes (sidebar toggle, window resize, drag-over banner). */
-function AutoFit() {
+// The user can drag the boxes and pan and zoom the canvas, but only so far, so the
+// graph can't get lost off screen. The graph itself spans 436 x 288.
+const GRAPH_W = END_X + END_W;
+const NODE_EXTENT: CoordinateExtent = [
+  [-120, -100],
+  [GRAPH_W + 120, LANES_H + 100],
+];
+const PAN_EXTENT: CoordinateExtent = [
+  [-320, -260],
+  [GRAPH_W + 320, LANES_H + 260],
+];
+
+/**
+ * Refits the graph whenever the panel resizes (sidebar toggle, window resize,
+ * drag-over banner), unless the user has moved things; then their view is kept.
+ */
+function AutoFit({ userMoved }: { userMoved: RefObject<boolean> }) {
   const { fitView } = useReactFlow();
   const domNode = useStore((s) => s.domNode);
 
@@ -92,6 +112,7 @@ function AutoFit() {
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
+      if (userMoved.current) return;
       frame = requestAnimationFrame(() => void fitView(FIT_VIEW_OPTIONS));
     });
     observer.observe(domNode);
@@ -99,9 +120,92 @@ function AutoFit() {
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [domNode, fitView]);
+  }, [domNode, fitView, userMoved]);
 
   return null;
+}
+
+function PipelineCanvas() {
+  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState(nodes);
+  const { fitView } = useReactFlow();
+  // Ref for AutoFit (no re-render needed), state for showing the reset button.
+  const userMoved = useRef(false);
+  const [moved, setMoved] = useState(false);
+  const markMoved = () => {
+    userMoved.current = true;
+    setMoved(true);
+  };
+
+  const reset = () => {
+    userMoved.current = false;
+    setMoved(false);
+    setFlowNodes(nodes);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Next frame, so the fit sees the nodes back in their places.
+    requestAnimationFrame(() => void fitView({ ...FIT_VIEW_OPTIONS, duration: reduceMotion ? 0 : 250 }));
+  };
+
+  return (
+    <ReactFlow
+      className="pipeline"
+      style={{ position: "absolute", inset: 0 }}
+      nodes={flowNodes}
+      onNodesChange={onNodesChange}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      fitView
+      fitViewOptions={FIT_VIEW_OPTIONS}
+      minZoom={0.5}
+      maxZoom={1.6}
+      nodeExtent={NODE_EXTENT}
+      translateExtent={PAN_EXTENT}
+      onNodeDragStart={markMoved}
+      // event is null when the move came from code (fitView), not the user.
+      onMoveStart={(event) => {
+        if (event) markMoved();
+      }}
+      nodesDraggable
+      nodesConnectable={false}
+      nodesFocusable={false}
+      edgesFocusable={false}
+      elementsSelectable={false}
+      panOnDrag
+      panOnScroll={false}
+      zoomOnScroll
+      zoomOnPinch
+      zoomOnDoubleClick={false}
+      deleteKeyCode={null}
+      selectionKeyCode={null}
+      multiSelectionKeyCode={null}
+      // Defaults to Space, which would swallow the app's global Space-to-start shortcut.
+      panActivationKeyCode={null}
+      zoomActivationKeyCode={null}
+      // The attribution badge is a link that would navigate the Tauri webview away.
+      proOptions={PRO_OPTIONS}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--border)" />
+      <AutoFit userMoved={userMoved} />
+      {moved && (
+        <Panel position="top-right" className="!m-2">
+          <button
+            type="button"
+            onClick={reset}
+            title="Put the boxes and view back"
+            className="flex items-center gap-1.5 border px-2 py-1 text-[11px] transition-colors duration-100"
+            style={{
+              borderColor: "var(--border)",
+              backgroundColor: "var(--bg-secondary)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <RotateCcw size={12} />
+            Reset layout
+          </button>
+        </Panel>
+      )}
+    </ReactFlow>
+  );
 }
 
 export default function PipelineView() {
@@ -115,40 +219,7 @@ export default function PipelineView() {
         size check that keeps the original when the output isn't smaller, before it is written to the output folder.
       </p>
       <ReactFlowProvider>
-        <ReactFlow
-          className="pipeline"
-          style={{ position: "absolute", inset: 0 }}
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={FIT_VIEW_OPTIONS}
-          minZoom={0.5}
-          maxZoom={1.2}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          nodesFocusable={false}
-          edgesFocusable={false}
-          elementsSelectable={false}
-          panOnDrag={false}
-          panOnScroll={false}
-          zoomOnScroll={false}
-          zoomOnPinch={false}
-          zoomOnDoubleClick={false}
-          preventScrolling={false}
-          deleteKeyCode={null}
-          selectionKeyCode={null}
-          multiSelectionKeyCode={null}
-          // Defaults to Space, which would swallow the app's global Space-to-start shortcut.
-          panActivationKeyCode={null}
-          zoomActivationKeyCode={null}
-          // The attribution badge is a link that would navigate the Tauri webview away.
-          proOptions={PRO_OPTIONS}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--border)" />
-          <AutoFit />
-        </ReactFlow>
+        <PipelineCanvas />
       </ReactFlowProvider>
     </div>
   );

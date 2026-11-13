@@ -168,6 +168,17 @@ export function FileList() {
           {fileCount} file{fileCount !== 1 ? "s" : ""}
         </span>
         <div className="flex shrink-0 gap-1.5">
+          {/* Left of the view toggle: the row is right-aligned, so when this hides in
+              the pipeline view nothing else moves. */}
+          {fileView === "list" && (
+            <ToolbarButton
+              onClick={toggleThumbnails}
+              title={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
+              aria-label={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
+            >
+              {showThumbnails ? <LayoutList size={13} /> : <LayoutGrid size={13} />}
+            </ToolbarButton>
+          )}
           <div role="group" aria-label="View" className="flex">
             <ViewToggleButton active={fileView === "list"} view="list" onSelect={setFileView} label="List view">
               <List size={13} />
@@ -183,15 +194,6 @@ export function FileList() {
               <Workflow size={13} />
             </ViewToggleButton>
           </div>
-          {fileView === "list" && (
-            <ToolbarButton
-              onClick={toggleThumbnails}
-              title={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
-              aria-label={showThumbnails ? "Hide thumbnails" : "Show thumbnails"}
-            >
-              {showThumbnails ? <LayoutList size={13} /> : <LayoutGrid size={13} />}
-            </ToolbarButton>
-          )}
           <ToolbarButton onClick={handleAddMore}>
             <Plus size={13} />
             Add
