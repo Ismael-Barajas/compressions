@@ -1,7 +1,7 @@
 [package]
 name = "compressions"
 version = "1.4.0"
-description = "A cross-platform video and image compression tool"
+description = "A cross-platform desktop app for compressing videos, images, audio, and PDFs"
 authors = []
 edition = "2021"
 
